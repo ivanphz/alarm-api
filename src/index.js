@@ -18,11 +18,14 @@
  *
  * ── 输出契约（iPhone 快捷指令 / 安卓 Tasker 共用同一份 JSON）───────────────
  *
- *   fixedAlarms   固定 7 闹钟【全量】列出，每条 {label, action:"ON"/"OFF", scheduledAt}
- *                 → 遍历: 按 label 找到手机上预建的闹钟，按 action 开/关
- *   dynamicAlarms 未来24h窗口内要新建的动态闹钟 [{label, time, reason}]
- *                 → 先删除手机上所有 Gate-Dynamic-Event / Gate-Dynamic-Class 闹钟，
- *                   再按本数组逐条新建（系统默认样式），全删全建防残留
+ *   fixedAlarms   全部"可开关闹钟"【全量】列出（7个固定 + 预建上课闹钟），
+ *                 每条 {label, action:"ON"/"OFF", scheduledAt, kind:"fixed"/"class"}
+ *                 → 搬运工遍历: 按 label 找到手机上预建的闹钟，按 action 开/关（静默）
+ *   dynamicAlarms 未来24h窗口内要新建的【事件】闹钟 [{label, time, reason}]
+ *                 label 恒为 Gate-Dynamic-Event（不加日期/编号，靠关闭+重建管理）
+ *                 → 搬运工: 先查找所有 Gate-Dynamic-Event 全部【关闭】(静默,不删除)，
+ *                   再按本数组逐条新建（系统默认样式, 开启）。
+ *                   过期闹钟以"关闭僵尸"留存不响，由手动「大扫除」指令定期清理。
  *   dnd_schedule  稀疏字典 {"HH:MM": "ON"/"OFF"}，键严格限于 DND.WHITELIST
  *                 → 每个键位一条「特定时间」自动化: 到点查键，有键执行，无键装死
  * ==============================================================================
@@ -136,7 +139,12 @@ export default {
     const windowEnd   = virtualNow + 864e5 + CONFIG.SYSTEM.WINDOW_END_BUFFER_SECONDS * 1000;
     const inWindow = (ts) => ts >= windowStart && ts <= windowEnd;
 
-    const labelTime = new Map(CONFIG.FIXED_ALARMS.map(a => [a.label, a.scheduledAt]));
+    // 统一"可开关注册表" = 7个固定闹钟 + 预建上课闹钟（都靠 label 开关，需要时间做窗口裁剪）
+    const toggleRegistry = [
+      ...CONFIG.FIXED_ALARMS.map(a => ({ label: a.label, scheduledAt: a.scheduledAt, kind: "fixed" })),
+      ...CONFIG.WEEKEND_CLASS.SCHEDULE.map(s => ({ label: s.label, scheduledAt: s.time, kind: "class" }))
+    ];
+    const labelTime = new Map(toggleRegistry.map(a => [a.label, a.scheduledAt]));
 
     const activeFixedInWindow = new Set();
     const dynamicOut = [];
@@ -144,14 +152,14 @@ export default {
     const dndPoints = [];
 
     for (const m of matrices) {
-      // 固定闹钟: label 的预设时间落在窗口内 → ON
+      // 可开关闹钟: label 的预设时间落在窗口内 → ON
       for (const label of m.activeLabels) {
         const t = labelTime.get(label);
         if (t && inWindow(parseDateTime(m.dateStr, t).getTime())) {
           activeFixedInWindow.add(label);
         }
       }
-      // 动态闹钟: 窗口内的条目输出（label+time 去重）
+      // 动态闹钟(仅事件): 窗口内的条目输出（label+time 去重）
       for (const a of m.dynamicAlarms) {
         if (inWindow(parseDateTime(m.dateStr, a.time).getTime())) {
           const key = `${a.label}-${a.time}`;
@@ -166,11 +174,12 @@ export default {
       m.dnd_off.forEach(t => dndPoints.push({ type: "OFF", time: t, ts: parseDateTime(m.dateStr, t).getTime() }));
     }
 
-    // 固定闹钟全量 ON/OFF 指令（顺序与注册表一致）
-    const fixedOut = CONFIG.FIXED_ALARMS.map(a => ({
+    // 可开关闹钟全量 ON/OFF 指令（固定7个 + 上课，顺序: 固定在前 上课在后）
+    const fixedOut = toggleRegistry.map(a => ({
       label: a.label,
       action: activeFixedInWindow.has(a.label) ? "ON" : "OFF",
-      scheduledAt: a.scheduledAt
+      scheduledAt: a.scheduledAt,
+      kind: a.kind
     }));
 
     // DND 稀疏字典（窗口裁剪 + 白名单校验拦截）
@@ -194,14 +203,15 @@ export default {
     panel += `[窗口起点]: ${formatShanghai(windowStart)}\n`;
     panel += `[窗口终点]: ${formatShanghai(windowEnd)}\n\n`;
 
-    panel += `📳 固定闹钟指令 (按label找手机预建闹钟, 按action开关):\n`;
+    panel += `📳 可开关闹钟指令 (按label找手机预建闹钟, 按action开/关, 静默无弹窗):\n`;
     fixedOut.forEach(a => {
-      panel += `  ${a.action === "ON" ? "🟢" : "⚫"} [${a.action.padEnd(3)}] [${a.scheduledAt}] ${a.label}\n`;
+      const tag = a.kind === "class" ? "📚课" : "  固";
+      panel += `  ${a.action === "ON" ? "🟢" : "⚫"} [${a.action.padEnd(3)}] ${tag} [${a.scheduledAt}] ${a.label}\n`;
     });
 
-    panel += `\n⚡ 动态闹钟指令 (先删光所有 Gate-Dynamic-* 再按此新建):\n`;
+    panel += `\n⚡ 动态事件闹钟 (搬运工: 先"关闭"所有 Gate-Dynamic-Event 再按此新建; 绝不删除):\n`;
     if (dynamicOut.length === 0) {
-      panel += `  -> ∅ (本窗口无动态闹钟)\n`;
+      panel += `  -> ∅ (本窗口无动态事件闹钟)\n`;
     } else {
       dynamicOut.forEach(a => panel += `  🔔 [${a.time}] ${a.label} ← ${a.reason}\n`);
     }
