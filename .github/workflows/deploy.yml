@@ -1,0 +1,23 @@
+name: Deploy Repayment Calendar Worker
+
+# 触发条件
+on:
+  # 2) 手动触发按钮 (Actions 页面点 "Run workflow")
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+
+      - name: 发布 Worker 到 Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          # 入口、名称、兼容性日期都已写在 wrangler.toml 里，这里直接 deploy 即可
+          command: deploy
