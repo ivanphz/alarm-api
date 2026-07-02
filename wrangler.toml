@@ -1,0 +1,7 @@
+# ==============================================================================
+# Smart Schedule Gateway — Cloudflare Worker 部署配置
+# 部署命令: npx wrangler deploy
+# ==============================================================================
+name = "smart-schedule-gateway"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
