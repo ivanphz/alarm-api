@@ -119,20 +119,20 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     trace.push(`  [R2.4] 💼 午休铃13:30 + 下班铃17:28 ON，午间DND待R6.3装配`);
   }
 
-  // ═══ R3 周末上课（动态闹钟，仅法定休息日）═══════════════════════════════
+  // ═══ R3 周末上课（预建可开关，仅法定休息日）═══════════════════════════════
   if (CONFIG.WEEKEND_CLASS.ENABLED && !isWorkday) {
     for (const s of CONFIG.WEEKEND_CLASS.SCHEDULE) {
       if (s.day !== dow) continue;
       if (schoolBreak) {
-        // R3.3 学校假期跳课
-        trace.push(`  [R3.3] 🚫 ${s.name}跳过: 处于${schoolBreak.name}（假期补课另有安排，需要时手动设闹钟）`);
+        // R3.3 学校假期跳课（不加入 activeLabels → 输出 OFF）
+        trace.push(`  [R3.3] 🚫 ${s.name}(${s.label}) 跳过: 处于${schoolBreak.name}（假期补课另有安排，需要时手动设闹钟）→ 发 OFF`);
       } else if (blockLen >= CONFIG.LONG_REST_DAYS) {
         // R3.2 长休块跳课（含全天请假拼周末的情况）
-        trace.push(`  [R3.2] 🚫 ${s.name}跳过: 连续休息块 ${blockLen} 天 ≥ 阈值 ${CONFIG.LONG_REST_DAYS}（长假默认不上课，需要时手动设闹钟）`);
+        trace.push(`  [R3.2] 🚫 ${s.name}(${s.label}) 跳过: 连续休息块 ${blockLen} 天 ≥ 阈值 ${CONFIG.LONG_REST_DAYS}（长假默认不上课）→ 发 OFF`);
       } else {
-        // R3.1 正常上课
-        dynamicAlarms.push({ label: CONFIG.DYNAMIC_LABELS.CLASS, time: s.time, reason: s.name });
-        trace.push(`  [R3.1] 💃 ${s.name}: 动态闹钟 ${CONFIG.DYNAMIC_LABELS.CLASS} @ ${s.time}（闹钟穿透DND叫醒，DND维持09:30解除）`);
+        // R3.1 正常上课: 开启预建的上课闹钟（穿透DND叫醒，DND维持09:30解除）
+        activeLabels.add(s.label);
+        trace.push(`  [R3.1] 💃 ${s.name}: 开启预建闹钟 ${s.label} @ ${s.time}（闹钟穿透DND，DND维持09:30解除）`);
       }
     }
   }
@@ -156,9 +156,13 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     };
   };
 
-  /** 晨间碰撞的公共动作: 关固定早间组 + 清除晨间时段的动态闹钟 */
+  /** 晨间碰撞的公共动作: 关固定早间组 + 关晨间时段的上课闹钟 + 清晨间动态闹钟 */
   const clearMorning = () => {
     for (const lb of CONFIG.MORNING_LABELS) activeLabels.delete(lb);
+    // 上课闹钟已进 activeLabels，晨间碰撞时把落在晨间的课也关掉（如周六上午请假免上课）
+    for (const s of CONFIG.WEEKEND_CLASS.SCHEDULE) {
+      if (timeToMinutes(s.time) <= mornEnd) activeLabels.delete(s.label);
+    }
     dynamicAlarms = dynamicAlarms.filter(a => timeToMinutes(a.time) > mornEnd);
   };
 
