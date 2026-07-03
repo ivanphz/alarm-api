@@ -156,14 +156,14 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     };
   };
 
-  /** 晨间碰撞的公共动作: 关固定早间组 + 关晨间时段的上课闹钟 + 清晨间动态闹钟 */
+  /** 晨间碰撞的公共动作: 关固定早间组 + 关晨间时段的上课闹钟 */
   const clearMorning = () => {
     for (const lb of CONFIG.MORNING_LABELS) activeLabels.delete(lb);
     // 上课闹钟已进 activeLabels，晨间碰撞时把落在晨间的课也关掉（如周六上午请假免上课）
     for (const s of CONFIG.WEEKEND_CLASS.SCHEDULE) {
       if (timeToMinutes(s.time) <= mornEnd) activeLabels.delete(s.label);
     }
-    dynamicAlarms = dynamicAlarms.filter(a => timeToMinutes(a.time) > mornEnd);
+    // 注: 不再过滤 dynamicAlarms —— 事件闹钟由各自 WORK_EVENT 添加，互不清除
   };
 
   for (const ev of dayEvents) {
@@ -183,8 +183,9 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
         trace.push(`  [R4.1] 🛏️ ${groupName} [${ev.title}](${rangeDesc}) 晨间碰撞: 关闭全部早间闹钟（睡觉自由，DND见R6.2）`);
       } else {
         if (ev.startTime) {
-          dynamicAlarms.push({ label: CONFIG.DYNAMIC_LABELS.EVENT, time: ev.startTime, reason: ev.title });
-          trace.push(`  [R5.1] ⚡ ${groupName} [${ev.title}](${rangeDesc}) 晨间碰撞: 关早间固定组，新建 ${CONFIG.DYNAMIC_LABELS.EVENT} @ ${ev.startTime} 叫醒干活`);
+          const evLabel = `${CONFIG.DYNAMIC_LABELS.EVENT}-${ev.startTime.replace(":", "")}`;
+          dynamicAlarms.push({ label: evLabel, time: ev.startTime, reason: ev.title });
+          trace.push(`  [R5.1] ⚡ ${groupName} [${ev.title}](${rangeDesc}) 晨间碰撞: 关早间固定组，目标动态闹钟 ${evLabel} @ ${ev.startTime}（时间已编入标签，供幂等对账）`);
         } else {
           trace.push(`  [R5.1] ⚡ ${groupName} [${ev.title}](全天) 晨间碰撞: 关早间固定组（全天事件无具体时间，不建动态闹钟，需要时手动设）`);
         }
