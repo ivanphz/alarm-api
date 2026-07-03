@@ -1,7 +1,15 @@
 /**
  * ==============================================================================
- * 🚀 index.js — Smart Schedule Gateway 主入口 (V9.0 多文件版)
+ * 🚀 index.js — Smart Schedule Gateway 主入口 (V9.1 多文件版·含鉴权)
  * ==============================================================================
+ *
+ * ── 鉴权（所有请求，含调试接口）────────────────────────────────────────────
+ *
+ *   ⚠️ 每个请求 URL 必须带 ?key=你的密钥，否则一律 401 拒绝。
+ *      密钥存 Worker Secret: GATEWAY_KEY（配置见 config.js 顶部说明）。
+ *      Fail-closed: Secret 没配 或 key 不符 → 全部拒绝（绝不裸奔）。
+ *      浏览器调试时把 &key=... 一起拼上，例:
+ *        YOUR_URL?key=abc123&testDate=2026-01-03&testTime=14:30
  *
  * ── 调试接口（URL 查询参数，可任意组合）─────────────────────────────────────
  *
@@ -21,13 +29,17 @@
  *   fixedAlarms   全部"可开关闹钟"【全量】列出（7个固定 + 预建上课闹钟），
  *                 每条 {label, action:"ON"/"OFF", scheduledAt, kind:"fixed"/"class"}
  *                 → 搬运工遍历: 按 label 找到手机上预建的闹钟，按 action 开/关（静默）
- *   dynamicAlarms 未来24h窗口内要新建的【事件】闹钟 [{label, time, reason}]
- *                 label 恒为 Gate-Dynamic-Event（不加日期/编号，靠关闭+重建管理）
- *                 → 搬运工: 先查找所有 Gate-Dynamic-Event 全部【关闭】(静默,不删除)，
- *                   再按本数组逐条新建（系统默认样式, 开启）。
- *                   过期闹钟以"关闭僵尸"留存不响，由手动「大扫除」指令定期清理。
- *   dnd_schedule  稀疏字典 {"HH:MM": "ON"/"OFF"}，键严格限于 DND.WHITELIST
- *                 → 每个键位一条「特定时间」自动化: 到点查键，有键执行，无键装死
+ *   dynamicAlarms 未来24h窗口内【期望存在并开启】的事件闹钟 [{label, time, reason}]
+ *                 label = Gate-Dynamic-Event-HHMM（时间编入名字，作为幂等身份）
+ *                 → 搬运工做【对账】而非重建（无抖动、绝不删除）:
+ *                   ①取得所有闹钟，名字含 Gate-Dynamic-Event 的:
+ *                      在本清单里→保持/开启; 不在本清单里→关闭(静默)
+ *                   ②本清单里、手机上还没有的同名闹钟→新建(开启)
+ *                   过期/取消的以"关闭僵尸"留存不响，由手动「大扫除」定期清理。
+ *   dnd_schedule  【今天这一天】的 DND 计划 {"HH:MM": "ON"/"OFF"}，键限于 DND.WHITELIST
+ *                 → 每个键位一条「特定时间」自动化(刺客): 到点抓本 JSON、读自己那个键，
+ *                   有键执行 ON/OFF，无键装死。DND 是到点即时执行，只需今天、不做前瞻，
+ *                   故不套用闹钟那个 24h 窗口（否则刺客触发那刻今天的键会被窗口挤掉）。
  * ==============================================================================
  */
 
@@ -39,15 +51,48 @@ import { parseICS, isEventOnDate, parseTestEvents } from "./ics-parser.js";
 import { makeRestDayChecker } from "./rest-days.js";
 import { generateDayMatrix } from "./rules.js";
 
+/** 常量时间字符串比较（长度不同直接 false，长度相同则逐位异或累加，不提前返回） */
+function constantTimeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export default {
   /**
    * @param env Cloudflare 运行时注入的环境变量/Secret 容器
    *            env.CALENDAR_URLS = 家庭日历订阅链接（Secret，逗号或换行分隔多条）
    *            配置方法见 config.js 顶部"数据源"一节的说明
    */
+  /**
+   * @param env Cloudflare 运行时注入的环境变量/Secret 容器
+   *            env.GATEWAY_KEY   = 访问密钥（Secret，鉴权用，见 config.js 顶部说明）
+   *            env.CALENDAR_URLS = 家庭日历订阅链接（Secret，逗号或换行分隔多条）
+   *            配置方法见 config.js 顶部"数据源/鉴权"两节的说明
+   */
   async fetch(request, env) {
     const url = new URL(request.url);
-    const trace = ["=== ⚡️ 网关全链路审计日志 (V9.0 多文件规则引擎版) ==="];
+
+    // ── 0. 鉴权（fail-closed，一切处理之前）─────────────────────────────────
+    // 规则: 请求必须带 ?key=<密钥>，且与 Worker Secret GATEWAY_KEY 完全一致。
+    //   · Secret 未配置(空) → 一律拒绝（宁可锁死也不裸奔，专治 fail-open）
+    //   · key 缺失 / 不符   → 一律拒绝
+    // 常量时间比较，避免逐字符提前返回带来的（极微弱的）计时侧信道。
+    const expectedKey = (env && env.GATEWAY_KEY) || "";
+    const providedKey = url.searchParams.get("key") || "";
+    const keyOk = expectedKey.length > 0 && constantTimeEqual(providedKey, expectedKey);
+    if (!keyOk) {
+      return new Response(
+        JSON.stringify({
+          error: "unauthorized",
+          hint: "请求需带正确的 ?key= 参数；若刚部署，先用 `npx wrangler secret put GATEWAY_KEY` 配置密钥"
+        }, null, 2),
+        { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    const trace = ["=== ⚡️ 网关全链路审计日志 (V9.1 多文件规则引擎版) ==="];
 
     // ── 1. 时间环境（生产 or 仿真沙盒）──────────────────────────────────────
     const testDate = url.searchParams.get("testDate");
@@ -149,8 +194,8 @@ export default {
     const activeFixedInWindow = new Set();
     const dynamicOut = [];
     const seenDynamic = new Set();
-    const dndPoints = [];
 
+    // 闹钟部分: 仍用三日矩阵 + 24h 前瞻窗口（闹钟要提前把明天的开好）
     for (const m of matrices) {
       // 可开关闹钟: label 的预设时间落在窗口内 → ON
       for (const label of m.activeLabels) {
@@ -169,9 +214,6 @@ export default {
           }
         }
       }
-      // DND 时间点
-      m.dnd_on.forEach(t => dndPoints.push({ type: "ON", time: t, ts: parseDateTime(m.dateStr, t).getTime() }));
-      m.dnd_off.forEach(t => dndPoints.push({ type: "OFF", time: t, ts: parseDateTime(m.dateStr, t).getTime() }));
     }
 
     // 可开关闹钟全量 ON/OFF 指令（固定7个 + 上课，顺序: 固定在前 上课在后）
@@ -182,22 +224,27 @@ export default {
       kind: a.kind
     }));
 
-    // DND 稀疏字典（窗口裁剪 + 白名单校验拦截）
+    // ── DND 稀疏字典 ────────────────────────────────────────────────────────
+    // ⚠️ DND 是"到点即时执行": 每个刺客在【自己那个时间点当天】触发时抓 JSON 读键。
+    //    所以 DND 只取 baseDate(今天) 这一天的决策，绝不能套用给闹钟用的 24h 前瞻窗口
+    //    —— 否则刺客触发那刻，今天的键刚好被 now+15s 的窗口左边界挤掉，读成明天的键，
+    //    造成日期错位（如周五晚 22:25 读不到、晚间 DND 消失）。
+    //    今天全天的键都输出（含已过去的），各刺客只读自己那个键，互不干扰。
+    const todayMatrix = matrices[1];   // matrices = [昨天, 今天, 明天]
     const dndOut = {};
-    dndPoints
-      .filter(p => inWindow(p.ts))
-      .sort((a, b) => a.ts - b.ts)
-      .forEach(p => {
-        if (!CONFIG.DND.WHITELIST.includes(p.time)) {
-          trace.push(`[校验🚨] DND 键 ${p.time} 不在白名单内，已拦截（无刺客接收，输出无意义，请检查规则）`);
-          return;
-        }
-        dndOut[p.time] = p.type;
-      });
+    const applyDnd = (time, type) => {
+      if (!CONFIG.DND.WHITELIST.includes(time)) {
+        trace.push(`[校验🚨] DND 键 ${time} 不在白名单内，已拦截（无刺客接收，请检查规则）`);
+        return;
+      }
+      dndOut[time] = type;
+    };
+    todayMatrix.dnd_on.forEach(t => applyDnd(t, "ON"));
+    todayMatrix.dnd_off.forEach(t => applyDnd(t, "OFF"));
 
     // ── 6. 人类可读调试面板 ─────────────────────────────────────────────────
     let panel = `====================================\n`;
-    panel += `⏰ Smart Schedule Gateway (V9.0)\n`;
+    panel += `⏰ Smart Schedule Gateway (V9.1)\n`;
     panel += `====================================\n`;
     panel += `[环境快照]: ${formatShanghai(virtualNow)}\n`;
     panel += `[窗口起点]: ${formatShanghai(windowStart)}\n`;
@@ -209,19 +256,19 @@ export default {
       panel += `  ${a.action === "ON" ? "🟢" : "⚫"} [${a.action.padEnd(3)}] ${tag} [${a.scheduledAt}] ${a.label}\n`;
     });
 
-    panel += `\n⚡ 动态事件闹钟 (搬运工: 先"关闭"所有 Gate-Dynamic-Event 再按此新建; 绝不删除):\n`;
+    panel += `\n⚡ 动态事件闹钟·期望态 (搬运工对账: 名字含Gate-Dynamic-Event的,在此清单→开,不在→关;缺的→建):\n`;
     if (dynamicOut.length === 0) {
-      panel += `  -> ∅ (本窗口无动态事件闹钟)\n`;
+      panel += `  -> ∅ (本窗口无动态事件闹钟, 手机上现有的应全部关闭)\n`;
     } else {
       dynamicOut.forEach(a => panel += `  🔔 [${a.time}] ${a.label} ← ${a.reason}\n`);
     }
 
-    panel += `\n🔕 DND 盲切指令 (稀疏输出, 无键=刺客装死不动):\n`;
+    panel += `\n🔕 DND 今日计划 (刺客到点读自己那个键; 只反映今天, 无键=装死不动):\n`;
     const dndKeys = Object.keys(dndOut);
     if (dndKeys.length === 0) {
-      panel += `  -> ∅ (未来24H无任何DND指令, 全天手工掌控)\n`;
+      panel += `  -> ∅ (今日无任何DND指令, 全天手工掌控)\n`;
     } else {
-      dndKeys.forEach(k => panel += `  -> [${k}] ${dndOut[k]}\n`);
+      dndKeys.sort().forEach(k => panel += `  -> [${k}] ${dndOut[k]}\n`);
     }
 
     panel += `\n🔍 DEEPLOG 审计追踪 (方括号内为规则编号, 对应 rules.js):\n` + trace.join("\n");
@@ -229,7 +276,7 @@ export default {
     // ── 7. 最终响应 ─────────────────────────────────────────────────────────
     return new Response(JSON.stringify({
       meta: {
-        version: "V9.0-RuleEngine",
+        version: "V9.1-RuleEngine-Auth",
         currentTime: formatShanghai(Date.now()),
         windowLeftBound: formatShanghai(windowStart),
         windowRightBound: formatShanghai(windowEnd)
