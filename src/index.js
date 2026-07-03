@@ -1,3 +1,12 @@
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  🔌 鉴权总开关（一眼可见，改这一行即可切换）                                ║
+// ║     false = 正常鉴权，请求 URL 必须带 ?key=你的密钥                          ║
+// ║     true  = 关闭鉴权裸奔，输网址就能访问（联调图方便时用）                    ║
+// ║  改完 git push，Actions 自动部署即生效。                                     ║
+// ║  （另: CF 面板配 AUTH_DISABLED=true 也能临时裸奔，两者任一为真即放行。）      ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+const AUTH_DISABLED = true;
+
 /**
  * ==============================================================================
  * 🚀 index.js — Smart Schedule Gateway 主入口 (V9.1 多文件版·含鉴权)
@@ -60,6 +69,33 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
+/**
+ * 宽容解析"URL 列表"配置，吃得下多种写法:
+ *   · 单条:            https://a.ics
+ *   · 多条(逗号/分号/换行/空格任意混合分隔): https://a.ics, https://b.ics
+ *   · JSON 数组:       ["https://a.ics","https://b.ics"]
+ *   · JSON 单串:       "https://a.ics"
+ * 自动去首尾空白、剥掉包裹的引号/方括号，只保留 http/https 开头的项。
+ */
+function parseUrlList(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  // 先试 JSON（数组或字符串）
+  try {
+    const j = JSON.parse(text);
+    if (Array.isArray(j)) {
+      return j.map(x => String(x).trim()).filter(s => /^https?:\/\//i.test(s));
+    }
+    if (typeof j === "string" && /^https?:\/\//i.test(j.trim())) {
+      return [j.trim()];
+    }
+  } catch (_) { /* 非 JSON，走分隔符拆分 */ }
+  // 按 逗号/分号/换行/空白 拆分（合法 URL 内不含空白，安全），剥引号方括号
+  return text.split(/[\s,;]+/)
+    .map(s => s.replace(/^["'\[\]]+|["'\[\]]+$/g, "").trim())
+    .filter(s => /^https?:\/\//i.test(s));
+}
+
 export default {
   /**
    * @param env Cloudflare 运行时注入的环境变量/Secret 容器
@@ -77,23 +113,31 @@ export default {
     const url = new URL(request.url);
 
     // ── 0. 鉴权（一切处理之前）─────────────────────────────────────────────
-    // 两种放行方式，从上到下:
-    //   ① 显式关闭鉴权: Secret/vars 里设 AUTH_DISABLED = "true"（必须字面量 true）
-    //      → 直接放行，输网址即可。这是个"需要主动打开"的明确动作。
-    //   ② 正常鉴权(默认): 请求带 ?key=<密钥> 且与 GATEWAY_KEY 完全一致才放行。
-    // Fail-closed 兜底: 若既没显式关闭、GATEWAY_KEY 又空/未配 → 一律 401 锁死。
+    // 放行条件，从上到下:
+    //   ① 代码顶部常量 AUTH_DISABLED === true（最直观，改一行即切换）
+    //   ② CF 面板/Secret 里 AUTH_DISABLED = true（大小写/首尾空白都容错；可选覆盖）
+    //   ③ 正常鉴权: 请求带密钥且与 GATEWAY_KEY 一致
+    // 密钥兼容三种传法(任一即可): ?key=xxx / 请求头 X-Gateway-Key / Authorization: Bearer xxx
+    // 两侧密钥都自动去首尾空白（防 CF 粘贴时带尾随换行/空格导致对不上）。
+    // Fail-closed 兜底: 上面都不满足、GATEWAY_KEY 又空/未配 → 一律 401 锁死。
     //   —— 误删 GATEWAY_KEY 只会锁死(安全方向)，绝不会因配置丢失而静默裸奔。
     // 常量时间比较，避免逐字符提前返回的（极微弱）计时侧信道。
-    const authDisabled = String((env && env.AUTH_DISABLED) || "") === "true";
-    if (!authDisabled) {
-      const expectedKey = (env && env.GATEWAY_KEY) || "";
-      const providedKey = url.searchParams.get("key") || "";
+    const authOff = AUTH_DISABLED ||
+      String((env && env.AUTH_DISABLED) || "").trim().toLowerCase() === "true";
+    if (!authOff) {
+      const expectedKey = String((env && env.GATEWAY_KEY) || "").trim();
+      const providedKey = (
+        url.searchParams.get("key") ||
+        request.headers.get("X-Gateway-Key") ||
+        (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "") ||
+        ""
+      ).trim();
       const keyOk = expectedKey.length > 0 && constantTimeEqual(providedKey, expectedKey);
       if (!keyOk) {
         return new Response(
           JSON.stringify({
             error: "unauthorized",
-            hint: "请求需带正确的 ?key= 参数；若想临时关闭鉴权，设 AUTH_DISABLED=true；若刚部署，先配置 GATEWAY_KEY"
+            hint: "请求需带正确密钥(?key= 或 X-Gateway-Key 头 或 Authorization: Bearer)；若想关闭鉴权，把 index.js 顶部 AUTH_DISABLED 改为 true（或 CF 设 AUTH_DISABLED=true）"
           }, null, 2),
           { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
         );
@@ -143,20 +187,17 @@ export default {
     }
 
     // ── 3. 日历事件（真实 ICS + 虚拟 testEvents 合并）──────────────────────
-    // 🔐 日历链接从 Worker Secret 读取（不进代码仓库），逗号/换行分隔多条
-    const calendarUrls = String((env && env.CALENDAR_URLS) || "")
-      .split(/[\n,]/)
-      .map(s => s.trim())
-      .filter(s => s.startsWith("http"));
+    // 🔐 日历链接从环境变量读取（不进代码仓库）。宽容解析: 单条/多条(逗号分号换行空格)/JSON数组皆可
+    const calendarUrls = parseUrlList(env && env.CALENDAR_URLS);
 
     let allEvents = [];
     if (url.searchParams.get("skipCalendar") === "1") {
       trace.push(`[日历] ⏭️ skipCalendar=1: 跳过真实日历拉取（纯虚拟事件测试模式）`);
     } else if (calendarUrls.length === 0) {
-      trace.push(`[日历🚨] Secret CALENDAR_URLS 未配置或为空！日历事件功能整体失效。` +
-        `请执行 npx wrangler secret put CALENDAR_URLS 配置（详见 config.js 顶部说明）`);
+      trace.push(`[日历🚨] CALENDAR_URLS 未配置或没有解析出有效链接！日历事件功能整体失效。` +
+        `请在 CF 面板/Secret 里配置 CALENDAR_URLS（单条或多条 http(s) 链接，详见 config.js 顶部说明）`);
     } else {
-      trace.push(`[日历] 🔐 从 Secret 读取到 ${calendarUrls.length} 条订阅链接`);
+      trace.push(`[日历] 🔐 解析到 ${calendarUrls.length} 条订阅链接`);
       for (const calUrl of calendarUrls) {
         try {
           const res = await fetch(calUrl);
