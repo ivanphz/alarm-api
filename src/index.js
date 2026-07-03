@@ -5,11 +5,12 @@
  *
  * ── 鉴权（所有请求，含调试接口）────────────────────────────────────────────
  *
- *   ⚠️ 每个请求 URL 必须带 ?key=你的密钥，否则一律 401 拒绝。
- *      密钥存 Worker Secret: GATEWAY_KEY（配置见 config.js 顶部说明）。
- *      Fail-closed: Secret 没配 或 key 不符 → 全部拒绝（绝不裸奔）。
- *      浏览器调试时把 &key=... 一起拼上，例:
- *        YOUR_URL?key=abc123&testDate=2026-01-03&testTime=14:30
+ *   默认: 每个请求 URL 必须带 ?key=你的密钥，否则一律 401 拒绝。
+ *         密钥存 GATEWAY_KEY（Secret 或明文 vars 皆可，见 config.js 顶部说明）。
+ *   临时关闭: 设 AUTH_DISABLED=true 即可裸奔(输网址就行)，联调用。
+ *   Fail-closed 兜底: 没显式关闭、GATEWAY_KEY 又空/未配 → 401 锁死，绝不静默裸奔。
+ *   浏览器调试(鉴权开着时)把 &key=... 一起拼上，例:
+ *     YOUR_URL?key=abc123&testDate=2026-01-03&testTime=14:30
  *
  * ── 调试接口（URL 查询参数，可任意组合）─────────────────────────────────────
  *
@@ -67,29 +68,36 @@ export default {
    */
   /**
    * @param env Cloudflare 运行时注入的环境变量/Secret 容器
-   *            env.GATEWAY_KEY   = 访问密钥（Secret，鉴权用，见 config.js 顶部说明）
-   *            env.CALENDAR_URLS = 家庭日历订阅链接（Secret，逗号或换行分隔多条）
+   *            env.GATEWAY_KEY    = 访问密钥（鉴权用，Secret 或明文 vars 皆可）
+   *            env.AUTH_DISABLED  = "true" 则关闭鉴权（联调用，可选）
+   *            env.CALENDAR_URLS  = 家庭日历订阅链接（逗号或换行分隔多条）
    *            配置方法见 config.js 顶部"数据源/鉴权"两节的说明
    */
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ── 0. 鉴权（fail-closed，一切处理之前）─────────────────────────────────
-    // 规则: 请求必须带 ?key=<密钥>，且与 Worker Secret GATEWAY_KEY 完全一致。
-    //   · Secret 未配置(空) → 一律拒绝（宁可锁死也不裸奔，专治 fail-open）
-    //   · key 缺失 / 不符   → 一律拒绝
-    // 常量时间比较，避免逐字符提前返回带来的（极微弱的）计时侧信道。
-    const expectedKey = (env && env.GATEWAY_KEY) || "";
-    const providedKey = url.searchParams.get("key") || "";
-    const keyOk = expectedKey.length > 0 && constantTimeEqual(providedKey, expectedKey);
-    if (!keyOk) {
-      return new Response(
-        JSON.stringify({
-          error: "unauthorized",
-          hint: "请求需带正确的 ?key= 参数；若刚部署，先用 `npx wrangler secret put GATEWAY_KEY` 配置密钥"
-        }, null, 2),
-        { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
-      );
+    // ── 0. 鉴权（一切处理之前）─────────────────────────────────────────────
+    // 两种放行方式，从上到下:
+    //   ① 显式关闭鉴权: Secret/vars 里设 AUTH_DISABLED = "true"（必须字面量 true）
+    //      → 直接放行，输网址即可。这是个"需要主动打开"的明确动作。
+    //   ② 正常鉴权(默认): 请求带 ?key=<密钥> 且与 GATEWAY_KEY 完全一致才放行。
+    // Fail-closed 兜底: 若既没显式关闭、GATEWAY_KEY 又空/未配 → 一律 401 锁死。
+    //   —— 误删 GATEWAY_KEY 只会锁死(安全方向)，绝不会因配置丢失而静默裸奔。
+    // 常量时间比较，避免逐字符提前返回的（极微弱）计时侧信道。
+    const authDisabled = String((env && env.AUTH_DISABLED) || "") === "true";
+    if (!authDisabled) {
+      const expectedKey = (env && env.GATEWAY_KEY) || "";
+      const providedKey = url.searchParams.get("key") || "";
+      const keyOk = expectedKey.length > 0 && constantTimeEqual(providedKey, expectedKey);
+      if (!keyOk) {
+        return new Response(
+          JSON.stringify({
+            error: "unauthorized",
+            hint: "请求需带正确的 ?key= 参数；若想临时关闭鉴权，设 AUTH_DISABLED=true；若刚部署，先配置 GATEWAY_KEY"
+          }, null, 2),
+          { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
+        );
+      }
     }
 
     const trace = ["=== ⚡️ 网关全链路审计日志 (V9.1 多文件规则引擎版) ==="];
