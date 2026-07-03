@@ -46,6 +46,12 @@ export const CONFIG = {
   //    它存放在 Cloudflare Worker Secret 中，变量名: CALENDAR_URLS
   //    多条链接用【英文逗号】或【换行】分隔，index.js 启动时自动读取拆分。
   //
+  //    值的写法很宽容，以下都能识别:
+  //      单条:      https://a.ics
+  //      多条:      https://a.ics, https://b.ics  （逗号/分号/换行/空格任意混合分隔）
+  //      JSON数组:  ["https://a.ics","https://b.ics"]
+  //    自动去首尾空白、剥引号方括号，只保留 http(s) 开头的项。
+  //
   //    ① 线上配置（一次性，执行后粘贴链接回车 + Ctrl-D 结束）:
   //         npx wrangler secret put CALENDAR_URLS
   //       或在 Cloudflare 控制台: Worker → Settings → Variables and Secrets →
