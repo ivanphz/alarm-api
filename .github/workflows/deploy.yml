@@ -4,9 +4,9 @@
 #
 # 一次性准备（在 GitHub 仓库 Settings → Secrets and variables → Actions 里加两个 Secret）:
 #
-#   CLOUDFLARE_API_TOKEN   Cloudflare 后台 → My Profile → API Tokens → Create Token
-#                          → 用 "Edit Cloudflare Workers" 模板 → 生成后复制粘贴
-#   CLOUDFLARE_ACCOUNT_ID  Cloudflare 后台任意 Worker 页面右侧 / Workers 概览页可见的 Account ID
+#   CF_API_TOKEN   Cloudflare 后台 → My Profile → API Tokens → Create Token
+#                  → 用 "Edit Cloudflare Workers" 模板 → 生成后复制粘贴
+#   CF_ACCOUNT_ID  Cloudflare 后台任意 Worker 页面右侧 / Workers 概览页可见的 Account ID
 #
 # ⚠️ 注意: 家庭日历的 CALENDAR_URLS 是【Worker Secret】(存在 Cloudflare 那边)，
 #    不是 GitHub Secret。它只需用 `npx wrangler secret put CALENDAR_URLS` 配置一次，
@@ -32,11 +32,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Deploy with Wrangler
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          wranglerVersion: "4"
           # 不写 command 时，默认执行 `wrangler deploy`，读取根目录 wrangler.toml
