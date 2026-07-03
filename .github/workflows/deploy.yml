@@ -1,23 +1,42 @@
-name: Deploy Repayment Calendar Worker
+# ==============================================================================
+# GitHub Actions — 推送到 main 分支即自动部署到 Cloudflare Worker
+# ==============================================================================
+#
+# 一次性准备（在 GitHub 仓库 Settings → Secrets and variables → Actions 里加两个 Secret）:
+#
+#   CLOUDFLARE_API_TOKEN   Cloudflare 后台 → My Profile → API Tokens → Create Token
+#                          → 用 "Edit Cloudflare Workers" 模板 → 生成后复制粘贴
+#   CLOUDFLARE_ACCOUNT_ID  Cloudflare 后台任意 Worker 页面右侧 / Workers 概览页可见的 Account ID
+#
+# ⚠️ 注意: 家庭日历的 CALENDAR_URLS 是【Worker Secret】(存在 Cloudflare 那边)，
+#    不是 GitHub Secret。它只需用 `npx wrangler secret put CALENDAR_URLS` 配置一次，
+#    之后每次 Actions 部署都不会动它、会一直保留。所以本工作流不涉及它。
+#
+# 手动触发: 也可在 GitHub 仓库 Actions 页面点 "Run workflow" 手动部署（workflow_dispatch）。
+# ==============================================================================
 
-# 触发条件
+name: Deploy to Cloudflare Workers
+
 on:
-  # 2) 手动触发按钮 (Actions 页面点 "Run workflow")
-  workflow_dispatch:
+  push:
+    branches: [main]        # 推到 main 就部署
+  workflow_dispatch: {}     # 允许在 GitHub 网页手动触发
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Deploy to Cloudflare
     steps:
-      - name: Checkout 代码
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: 发布 Worker 到 Cloudflare
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy with Wrangler
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          wranglerVersion: '4'
-          # 入口、名称、兼容性日期都已写在 wrangler.toml 里，这里直接 deploy 即可
-          command: deploy
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 不写 command 时，默认执行 `wrangler deploy`，读取根目录 wrangler.toml
