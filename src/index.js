@@ -1,11 +1,11 @@
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  🔌 鉴权总开关（一眼可见，改这一行即可切换）                                ║
+// ║  🔌 鉴权总开关·缺省值（config.user.js 里若设了 AUTH_DISABLED 则以它为准）    ║
 // ║     false = 正常鉴权，请求 URL 必须带 ?key=你的密钥                          ║
 // ║     true  = 关闭鉴权裸奔，输网址就能访问（联调图方便时用）                    ║
+// ║  日常切换建议直接改 config.user.js 里的 AUTH_DISABLED；这里是兜底缺省。       ║
 // ║  改完 git push，Actions 自动部署即生效。                                     ║
-// ║  （另: CF 面板配 AUTH_DISABLED=true 也能临时裸奔，两者任一为真即放行。）      ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-const AUTH_DISABLED = true;
+const AUTH_DISABLED_DEFAULT = false;
 
 /**
  * ==============================================================================
@@ -15,9 +15,9 @@ const AUTH_DISABLED = true;
  * ── 鉴权（所有请求，含调试接口）────────────────────────────────────────────
  *
  *   默认: 每个请求 URL 必须带 ?key=你的密钥，否则一律 401 拒绝。
- *         密钥存 GATEWAY_KEY（Secret 或明文 vars 皆可，见 config.js 顶部说明）。
- *   临时关闭: 设 AUTH_DISABLED=true 即可裸奔(输网址就行)，联调用。
- *   Fail-closed 兜底: 没显式关闭、GATEWAY_KEY 又空/未配 → 401 锁死，绝不静默裸奔。
+ *         密钥存 GATEWAY_KEY（Secret 或明文 vars 皆可，见 config.default.js 顶部说明）。
+ *   临时关闭: config.user.js 里设 AUTH_DISABLED: true 即可裸奔(输网址就行)，联调用。
+ *   Fail-closed 兜底: 未裸奔、GATEWAY_KEY 又空/未配 → 401 锁死，绝不静默裸奔。
  *   浏览器调试(鉴权开着时)把 &key=... 一起拼上，例:
  *     YOUR_URL?key=abc123&testDate=2026-01-03&testTime=14:30
  *
@@ -105,25 +105,26 @@ export default {
   /**
    * @param env Cloudflare 运行时注入的环境变量/Secret 容器
    *            env.GATEWAY_KEY    = 访问密钥（鉴权用，Secret 或明文 vars 皆可）
-   *            env.AUTH_DISABLED  = "true" 则关闭鉴权（联调用，可选）
    *            env.CALENDAR_URLS  = 家庭日历订阅链接（逗号或换行分隔多条）
-   *            配置方法见 config.js 顶部"数据源/鉴权"两节的说明
+   *            （鉴权开关 AUTH_DISABLED 现在读 config.user.js，不再走 env）
+   *            配置方法见 config.default.js 顶部"数据源/鉴权"两节的说明
    */
   async fetch(request, env) {
     const url = new URL(request.url);
 
     // ── 0. 鉴权（一切处理之前）─────────────────────────────────────────────
     // 放行条件，从上到下:
-    //   ① 代码顶部常量 AUTH_DISABLED === true（最直观，改一行即切换）
-    //   ② CF 面板/Secret 里 AUTH_DISABLED = true（大小写/首尾空白都容错；可选覆盖）
-    //   ③ 正常鉴权: 请求带密钥且与 GATEWAY_KEY 一致
+    //   ① 鉴权开关为 true → 直接放行(裸奔)。开关取值优先级:
+    //        config.user.js 里的 AUTH_DISABLED（若设了）> index.js 顶部缺省值
+    //   ② 正常鉴权: 请求带密钥且与 GATEWAY_KEY 一致
     // 密钥兼容三种传法(任一即可): ?key=xxx / 请求头 X-Gateway-Key / Authorization: Bearer xxx
     // 两侧密钥都自动去首尾空白（防 CF 粘贴时带尾随换行/空格导致对不上）。
-    // Fail-closed 兜底: 上面都不满足、GATEWAY_KEY 又空/未配 → 一律 401 锁死。
+    // Fail-closed 兜底: 未裸奔、GATEWAY_KEY 又空/未配 → 一律 401 锁死。
     //   —— 误删 GATEWAY_KEY 只会锁死(安全方向)，绝不会因配置丢失而静默裸奔。
     // 常量时间比较，避免逐字符提前返回的（极微弱）计时侧信道。
-    const authOff = AUTH_DISABLED ||
-      String((env && env.AUTH_DISABLED) || "").trim().toLowerCase() === "true";
+    const authOff = (CONFIG.AUTH_DISABLED !== undefined)
+      ? CONFIG.AUTH_DISABLED === true
+      : AUTH_DISABLED_DEFAULT === true;
     if (!authOff) {
       const expectedKey = String((env && env.GATEWAY_KEY) || "").trim();
       const providedKey = (
@@ -137,7 +138,7 @@ export default {
         return new Response(
           JSON.stringify({
             error: "unauthorized",
-            hint: "请求需带正确密钥(?key= 或 X-Gateway-Key 头 或 Authorization: Bearer)；若想关闭鉴权，把 index.js 顶部 AUTH_DISABLED 改为 true（或 CF 设 AUTH_DISABLED=true）"
+            hint: "请求需带正确密钥(?key= 或 X-Gateway-Key 头 或 Authorization: Bearer)；若想关闭鉴权，把 config.user.js 里 AUTH_DISABLED 设为 true"
           }, null, 2),
           { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } }
         );
