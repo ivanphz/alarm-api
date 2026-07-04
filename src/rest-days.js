@@ -25,9 +25,37 @@ import { CONFIG } from "./config.js";
 import { getSafeDayOfWeek, addDaysToDateString } from "./time-utils.js";
 import { isEventOnDate } from "./ics-parser.js";
 
-/** 判断事件标题是否命中某关键字组（关键字需带 [方括号] 出现在标题中） */
+// 成对括号表: 左符 → 对应右符（半角[] () 全角【】（）「」『』〔〕 等）
+const BRACKET_PAIRS = {
+  "[": "]", "(": ")", "{": "}",
+  "【": "】", "（": "）", "「": "」", "『": "』", "〔": "〕", "《": "》"
+};
+
+/** 归一化: 全角空格/各种空白 → 去掉首尾（用于宽松比对） */
+function normalizeTitle(s) {
+  return String(s || "")
+    .replace(/[\u3000\u00A0]/g, " ")   // 全角空格、不换行空格 → 普通空格
+    .trim();
+}
+
+/**
+ * 判断事件标题是否表达了某关键字组的"意图"，满足任一即命中:
+ *   ① 标题(去空白后)【恰好等于】某关键字        —— 如 "年假"、"　休假　"(全角空格)
+ *   ② 关键字被【一对完全配对的同种括号】包裹    —— 如 "[年假]" "【年假】" "（休假）"
+ *      （左右必须配对，"[年假)" 这种不算，防误判）
+ * 反例(不命中，安全): "讨论年假政策"、"陪孩子请假去医院" —— 既不恰好相等，
+ *   关键字也没被成对括号包住，视为普通日程，不会误关闹钟。
+ */
 export function matchKeywordGroup(title, group) {
-  return CONFIG.KEYWORDS[group].some(kw => (title || "").includes(`[${kw}]`));
+  const t = normalizeTitle(title);
+  if (!t) return false;
+  return CONFIG.KEYWORDS[group].some(kw => {
+    if (t === kw) return true;                       // ① 恰好等于
+    for (const [open, close] of Object.entries(BRACKET_PAIRS)) {
+      if (t.includes(`${open}${kw}${close}`)) return true;   // ② 成对括号包裹
+    }
+    return false;
+  });
 }
 
 /**
