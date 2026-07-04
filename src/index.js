@@ -148,11 +148,37 @@ export default {
     const trace = ["=== ⚡️ 网关全链路审计日志 (V9.1 多文件规则引擎版) ==="];
 
     // ── 1. 时间环境（生产 or 仿真沙盒）──────────────────────────────────────
-    const testDate = url.searchParams.get("testDate");
+    const rawTestDate = url.searchParams.get("testDate");
     const testTime = url.searchParams.get("testTime");
+
+    // testDate 合法性校验: 必须 YYYY-MM-DD，月 01-12、日 01-31，且能构成真实日期。
+    // 非法(如月/日为 00、2月30日、格式错) → 忽略 testDate，回退到实时 now。
+    // 好处: 手动测试时随手打的 2026-07-00 / 2026-00-10 不会报错，直接当没带日期。
+    let testDate = null;
+    let testDateReject = null;
+    if (rawTestDate) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawTestDate.trim());
+      if (m) {
+        const [, y, mo, d] = m;
+        // 用 UTC 正午锚点回读: 若月/日被 JS 归一化(如 00→上月、32→下月)则说明非法
+        const probe = new Date(`${rawTestDate}T12:00:00Z`);
+        const roundTrip = !isNaN(probe) &&
+          String(probe.getUTCMonth() + 1).padStart(2, "0") === mo &&
+          String(probe.getUTCDate()).padStart(2, "0") === d &&
+          String(probe.getUTCFullYear()) === y;
+        if (roundTrip) testDate = rawTestDate.trim();
+        else testDateReject = rawTestDate;
+      } else {
+        testDateReject = rawTestDate;
+      }
+    }
+
     const baseDate = testDate || getShanghaiDateString(0);
     let virtualNow = Date.now();
 
+    if (testDateReject) {
+      trace.push(`[环境] ⚠️ testDate="${testDateReject}" 非法(月/日为00或格式错)，已忽略 → 回退实时 now`);
+    }
     if (testDate && testTime) {
       const t = testTime.length === 5 ? `${testTime}:00` : testTime;
       virtualNow = new Date(`${testDate}T${t}+08:00`).getTime();
