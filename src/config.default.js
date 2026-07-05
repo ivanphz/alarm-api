@@ -201,58 +201,84 @@ export const DEFAULT_CONFIG = {
   },
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 设备状态时刻表 DEVICE —— 每个 DND 键位除了 focus(勿扰)，还携带静音/媒体音量
+  // 设备状态引擎 DEVICE —— 【每个字段是独立个体，谁也不依附谁】
   //
-  // 输出结构(device_schedule): 每个时间键 → 一个状态字典:
-  //   { focus: {mode,action,from,to}, silent: "ON"/"OFF"/null, media_volume: 数字/null }
-  //   刺客到点读自己那个键，逐字段处理；字段为 null = 该项不动(装死)。
-  //
-  // 🔑 向后兼容铁律: 刺客只处理它认识的字段，遇到不认识的/为 null 的一律跳过。
-  //    这样网关和刺客可各自独立升级，永不互相拖崩。
-  //
-  // focus 字段(为未来"睡眠/工作/personal 互转"留满口子):
-  //   mode   目标 focus: 目前固定 "dnd"；以后可 "sleep"/"work"/"personal"...
-  //   action "ON"=进入该focus / "OFF"=退出
-  //   from,to 预留: 表达"从A转到B"(如 sleep→work)，目前恒 null
-  //
-  // 下面两个是 silent / media_volume 的键位规则，你在 config.user.js 里可随意覆盖解耦:
+  // 结构: 每个字段一节，各自拥有: ①自己的规则 ②自己的独立时刻表 OWN。
+  //   最终时刻表 = 所有字段时刻的并集，逐时刻逐字段独立求值，无值=null=手机不动。
+  // 匹配双模式(手机URL ?mode= 可覆盖默认):
+  //   point   时点: 只在时刻键±容差内命中(适合定时刺客精确触发)
+  //   segment 时段: 每字段独立回看最近一次取值,区间用前一状态填满(可跨昨天)
+  //           → 手机重启/手动跑一次 = 恢复当前应有的完整状态(手动同步模式)
+  // 加新字段: device-state.js 的 FIELD_REGISTRY 加一行 + 这里加一节 + 手机加 ApplyXxx。
   // ───────────────────────────────────────────────────────────────────────────
   DEVICE: {
-    // 静音 silent: 默认跟 focus(dnd) 的 ON/OFF 同步；但列在此的时间键 → null(不碰静音)。
-    // 你的规则: 中午两个键不动静音。
-    SILENT_SKIP_KEYS: ["12:15", "13:29"],
+    // 默认匹配模式: "point"(时点) 或 "segment"(时段)。URL ?mode=point|segment 随时覆盖。
+    STATE_MODE_DEFAULT: "point",
 
-    // 媒体音量 media_volume: 列在此的时间键 → 归零(0)；其余键 → null(不动音量)。
-    // 你的规则: 7:40 / 中午两个 / 晚上20:55 归零，不区分放假。
-    MEDIA_ZERO_KEYS: ["07:40", "12:15", "13:29", "20:55"],
-    MEDIA_ZERO_VALUE: 0,             // 归零时设成的音量值(0~1，0=静音级)。想留一点声就改成 0.1 之类
+    // 时点模式容差(分钟, 前后独立): 键已过去多少分钟内仍算命中 / 键还有多少分钟到也算命中
+    POINT: { PAST_TOLERANCE_MIN: 3, FUTURE_TOLERANCE_MIN: 3 },
 
-    // focus 模式名 FOCUS_MODE_NAME: 输出到 mode 字段的值。
-    //   ⚠️ 必须是 iOS「设置→专注」里该 focus 的【真实名字】，因为手机端 Set Focus
-    //      是用这个变量值直接指定要开的 focus，值对不上就开不了。
-    //   英文机默认勿扰叫 "Do Not Disturb"。若你的机器是中文/自定义名，改成实际显示名。
-    //   以后加睡眠/工作模式，就是让网关按规则输出 "Sleep"/"Work"/"Personal" 等真实名。
-    FOCUS_MODE_NAME: "Do Not Disturb",
+    // 时段模式: LOOKBACK_HOURS 回溯窗口(26h保证跨过昨晚) / FUTURE_SNAP_MIN 向前吸附(分钟)
+    //           SYNC_ALARMS: 时段模式(状态重建)是否顺带跑一次闹钟对账(建议true)
+    SEGMENT: { LOOKBACK_HOURS: 26, FUTURE_SNAP_MIN: 0, SYNC_ALARMS: true },
 
-    // focus 守卫 FOCUS_GUARD: 给某个时间键设"期望的手机当前focus"，
-    //   刺客到点会【本地联网/现查】手机真实 focus，==此值才执行该 focus 操作，否则跳过。
-    //   用途: 尊重人工介入——如你半夜手动改了 focus，7:40 就不强行关。
-    //   ⚠️ 值要用 iOS 的【真实 focus 名】(与 FOCUS_MODE_NAME 同套命名)，如 "Do Not Disturb"。
-    //   格式: { "时间键": "期望的当前focus名" }。没列的键 = null = 无条件执行。
-    //   例(取消注释即启用"7:40仅当前还是勿扰才关"):
-    //     FOCUS_GUARD: { "07:40": "Do Not Disturb" }
-    //   手机端能否精确判断"当前是哪个focus"取决于 iOS 版本，搭刺客时真机验证。
-    FOCUS_GUARD: {},
+    // ── 字段: focus(勿扰/专注) ──────────────────────────────────────────────
+    //   规则时刻来自规则引擎(rules.js R6); MODE_NAME 必须是 iOS 里的真实 focus 名。
+    //   GUARD: { "07:40": "Do Not Disturb" } → 该时刻仅当手机当前focus==此值才执行。
+    //   OWN:   { "23:30": { mode: "Sleep", action: "ON" } } → 自己的独立时刻(与规则无关)。
+    FOCUS: {
+      MODE_NAME: "Do Not Disturb",
+      GUARD: {},
+      OWN: {}
+    },
 
-    // 闹钟同步时机 SYNC_ALARM_KEYS: 这些时间键的状态里会带 sync_alarms:true，
-    //   通用刺客读到就顺便跑一次 SyncAlarms(闹钟对账)。一天多点=容错(幂等,多跑无害)。
-    //   你的规则: 早07:40 / 午13:29 / 晚22:25 各同步一次。想改就改这个数组。
-    SYNC_ALARM_KEYS: ["07:40", "13:29", "22:25"],
+    // ── 字段: silent(静音) —— 独立个体 ──────────────────────────────────────
+    //   FOLLOW_FOCUS: true = "跟随focus的ON/OFF"是 silent 自己选的规则,想解耦改 false。
+    //   SKIP_KEYS: 跟随时跳过这些时刻(不碰静音)。
+    //   OWN: { "05:00": "ON" } → 自己的独立时刻,任意时间独立开关,与focus无关。
+    SILENT: {
+      FOLLOW_FOCUS: true,
+      SKIP_KEYS: ["12:15", "13:29"],
+      OWN: {}
+    },
 
-    // 当前时刻匹配容差(分钟) NOW_MATCH_TOLERANCE_MIN:
-    //   刺客发精确时间 ?now=HH:MM:SS，网关找与之相差 ≤ 此分钟数的最近白名单键。
-    //   自动化触发有几十秒延迟，±3 分钟绰绰有余；白名单最近两键(12:15/13:29)隔1h，不会误匹配。
-    NOW_MATCH_TOLERANCE_MIN: 3
+    // ── 字段: media_volume(媒体音量) —— 独立个体 ────────────────────────────
+    //   ZERO_KEYS: 这些时刻归零(不区分放假; 07:40/13:29因同步锚点每天都存在→每天归零)。
+    //   OWN: { "03:00": 0.3 } → 自己的独立时刻,任意时间设任意音量(0~1)。
+    MEDIA_VOLUME: {
+      ZERO_KEYS: ["07:40", "12:15", "13:29", "20:55"],
+      ZERO_VALUE: 0,
+      OWN: {}
+    },
+
+    // ── 闹钟同步锚点 —— 特殊者(闹钟是前瞻性的,与即时状态不同) ────────────────
+    //   这些时刻 sync_alarms:true,刺客读到就跑一次 SyncAlarms 对账。每天雷打不动。
+    SYNC_ALARMS: {
+      KEYS: ["07:40", "13:29", "22:25"]
+    },
+
+    // ── 跨字段覆盖层(最高优先级,可选) ───────────────────────────────────────
+    //   一个时刻同时动多个字段时用; 未知/未来字段原样透传(手机认识就执行,不认识忽略)。
+    //   例: "06:00": { silent: "OFF", media_volume: 0.5 }
+    CUSTOM_ACTIONS: {}
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 外部闹钟源 EXTERNAL_ALARMS —— 其它项目的时间点直接变成手机闹钟
+  //
+  // 你的签到/信用卡/提醒项目产出时间点,配在这里,网关拉取后并入 dynamicAlarms,
+  // 标签复用 Gate-Dynamic-Event-HHMM → 手机端搬运工零改动,自动建闹钟。
+  // 两种类型:
+  //   json: 源返回 [ { "date":"YYYY-MM-DD", "time":"HH:MM", "reason":"说明" }, ... ]
+  //         (或 { "alarms": [ ... ] } 包一层也行)
+  //   ics : 源是 iCal 订阅(如信用卡还款.ics); 全天事件用 time 字段配固定提醒时间。
+  // 拉取失败只记日志不影响主流程; enabled:false 可单独停用某源。
+  // ───────────────────────────────────────────────────────────────────────────
+  EXTERNAL_ALARMS: {
+    SOURCES: [
+      // { name: "签到",   type: "json", url: "https://xxx/alarms.json", enabled: true },
+      // { name: "信用卡", type: "ics",  url: "https://xxx/repay.ics", time: "09:00", enabled: true }
+    ]
   },
 
   // ───────────────────────────────────────────────────────────────────────────
