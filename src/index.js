@@ -310,7 +310,8 @@ export default {
     //    今天全天的键都输出，各刺客只读自己那个键，互不干扰。
     //
     // 每个键 → { focus:{mode,action,to,only_if_current}, silent, media_volume }:
-    //   focus.mode           目标 focus: 目前恒 "dnd"；以后 "sleep"/"work"/"personal"...
+    //   focus.mode           目标 focus 的【iOS真实名】(来自 DEVICE.FOCUS_MODE_NAME)，
+    //                        手机端 Set Focus 用它直接指定要开哪个 focus。默认 "Do Not Disturb"。
     //   focus.action         "ON"=进入 / "OFF"=退出 / (未来)"SWITCH"=转场
     //   focus.to             action=SWITCH 时的目标模式；目前恒 null
     //   focus.only_if_current 🔑守卫: 期望"手机当前focus"==此值才执行；null=无条件执行。
@@ -342,7 +343,7 @@ export default {
       // 目前统一 null；想让某键"仅当前是X才执行"，在 DEVICE.FOCUS_GUARD 里配。
       const guard = (CONFIG.DEVICE.FOCUS_GUARD && CONFIG.DEVICE.FOCUS_GUARD[time]) || null;
       deviceOut[time] = {
-        focus: { mode: "dnd", action, to: null, only_if_current: guard },
+        focus: { mode: CONFIG.DEVICE.FOCUS_MODE_NAME, action, to: null, only_if_current: guard },
         silent,
         media_volume: mediaVol
       };
