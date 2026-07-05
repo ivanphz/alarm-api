@@ -227,13 +227,21 @@ export const DEFAULT_CONFIG = {
     MEDIA_ZERO_KEYS: ["07:40", "12:15", "13:29", "20:55"],
     MEDIA_ZERO_VALUE: 0,             // 归零时设成的音量值(0~1，0=静音级)。想留一点声就改成 0.1 之类
 
+    // focus 模式名 FOCUS_MODE_NAME: 输出到 mode 字段的值。
+    //   ⚠️ 必须是 iOS「设置→专注」里该 focus 的【真实名字】，因为手机端 Set Focus
+    //      是用这个变量值直接指定要开的 focus，值对不上就开不了。
+    //   英文机默认勿扰叫 "Do Not Disturb"。若你的机器是中文/自定义名，改成实际显示名。
+    //   以后加睡眠/工作模式，就是让网关按规则输出 "Sleep"/"Work"/"Personal" 等真实名。
+    FOCUS_MODE_NAME: "Do Not Disturb",
+
     // focus 守卫 FOCUS_GUARD: 给某个时间键设"期望的手机当前focus"，
     //   刺客到点会【本地联网/现查】手机真实 focus，==此值才执行该 focus 操作，否则跳过。
     //   用途: 尊重人工介入——如你半夜手动改了 focus，7:40 就不强行关。
-    //   格式: { "时间键": "期望的当前focus模式" }。没列的键 = null = 无条件执行。
-    //   例(取消注释即启用"7:40仅当前还是dnd才关"):
-    //     FOCUS_GUARD: { "07:40": "dnd" }
-    //   ⚠️ 手机端能否精确判断"当前是哪个focus"取决于 iOS 版本，搭刺客时真机验证。
+    //   ⚠️ 值要用 iOS 的【真实 focus 名】(与 FOCUS_MODE_NAME 同套命名)，如 "Do Not Disturb"。
+    //   格式: { "时间键": "期望的当前focus名" }。没列的键 = null = 无条件执行。
+    //   例(取消注释即启用"7:40仅当前还是勿扰才关"):
+    //     FOCUS_GUARD: { "07:40": "Do Not Disturb" }
+    //   手机端能否精确判断"当前是哪个focus"取决于 iOS 版本，搭刺客时真机验证。
     FOCUS_GUARD: {}
   },
 
