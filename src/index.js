@@ -46,10 +46,13 @@ const AUTH_DISABLED_DEFAULT = false;
  *                      在本清单里→保持/开启; 不在本清单里→关闭(静默)
  *                   ②本清单里、手机上还没有的同名闹钟→新建(开启)
  *                   过期/取消的以"关闭僵尸"留存不响，由手动「大扫除」定期清理。
- *   dnd_schedule  【今天这一天】的 DND 计划 {"HH:MM": "ON"/"OFF"}，键限于 DND.WHITELIST
+ *   device_schedule 【今天这一天】的设备状态计划，键限于 DND.WHITELIST:
+ *                 { "HH:MM": { focus:{mode,action,to,only_if_current}, silent, media_volume } }
  *                 → 每个键位一条「特定时间」自动化(刺客): 到点抓本 JSON、读自己那个键，
- *                   有键执行 ON/OFF，无键装死。DND 是到点即时执行，只需今天、不做前瞻，
- *                   故不套用闹钟那个 24h 窗口（否则刺客触发那刻今天的键会被窗口挤掉）。
+ *                   逐字段处理: focus控勿扰/(未来)睡眠工作 · silent控静音 · media_volume控音量。
+ *                   字段为 null = 该项不动(装死)。只需今天、不做前瞻。
+ *                   focus.only_if_current: 期望的手机当前focus，刺客【本地现查】比对后决定执行。
+ *                   🔑 刺客只处理它认识的字段、跳过不认识/null 的 → 网关与刺客可独立升级。
  * ==============================================================================
  */
 
@@ -300,23 +303,52 @@ export default {
       kind: a.kind
     }));
 
-    // ── DND 稀疏字典 ────────────────────────────────────────────────────────
-    // ⚠️ DND 是"到点即时执行": 每个刺客在【自己那个时间点当天】触发时抓 JSON 读键。
-    //    所以 DND 只取 baseDate(今天) 这一天的决策，绝不能套用给闹钟用的 24h 前瞻窗口
-    //    —— 否则刺客触发那刻，今天的键刚好被 now+15s 的窗口左边界挤掉，读成明天的键，
-    //    造成日期错位（如周五晚 22:25 读不到、晚间 DND 消失）。
-    //    今天全天的键都输出（含已过去的），各刺客只读自己那个键，互不干扰。
+    // ── 设备状态时刻表 device_schedule ──────────────────────────────────────
+    // ⚠️ 到点即时执行: 每个刺客在【自己那个时间点当天】触发时抓 JSON 读键。
+    //    所以只取 baseDate(今天) 这一天的决策，绝不套用给闹钟用的 24h 前瞻窗口
+    //    —— 否则刺客触发那刻今天的键被 now+15s 窗口左边界挤掉，读成明天的键(日期错位)。
+    //    今天全天的键都输出，各刺客只读自己那个键，互不干扰。
+    //
+    // 每个键 → { focus:{mode,action,to,only_if_current}, silent, media_volume }:
+    //   focus.mode           目标 focus: 目前恒 "dnd"；以后 "sleep"/"work"/"personal"...
+    //   focus.action         "ON"=进入 / "OFF"=退出 / (未来)"SWITCH"=转场
+    //   focus.to             action=SWITCH 时的目标模式；目前恒 null
+    //   focus.only_if_current 🔑守卫: 期望"手机当前focus"==此值才执行；null=无条件执行。
+    //        网关只下发这个"期望值"，真正的"读手机当前focus并比对"在【刺客本地】做
+    //        (网关在云端物理上读不到手机实时focus)。刺客用中央 CheckFocusGuard 校验，
+    //        6刺客共用、改一处即可。手机暂不支持精细判断时，刺客可无视此字段直接执行。
+    //   silent       默认跟 focus.action 同步；在 DEVICE.SILENT_SKIP_KEYS 里的键 → null(不碰)
+    //   media_volume 在 DEVICE.MEDIA_ZERO_KEYS 里的键 → 归零值；其余 → null(不动)
     const todayMatrix = matrices[1];   // matrices = [昨天, 今天, 明天]
-    const dndOut = {};
-    const applyDnd = (time, type) => {
+    const deviceOut = {};
+    const applyState = (time, action) => {   // action: "ON" / "OFF"
       if (!CONFIG.DND.WHITELIST.includes(time)) {
-        trace.push(`[校验🚨] DND 键 ${time} 不在白名单内，已拦截（无刺客接收，请检查规则）`);
+        trace.push(`[校验🚨] 设备状态键 ${time} 不在白名单内，已拦截（无刺客接收，请检查规则）`);
         return;
       }
-      dndOut[time] = type;
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │ 🧩 复杂规则扩展锚点: 以后想按【放假/寒暑假/工作日】等条件细化           │
+      // │    silent、media_volume（甚至 focus.only_if_current）的取值，就加在这里。│
+      // │    此处能拿到全部当天上下文，可直接调用判定器:                          │
+      // │      rc.isOfficialWorkday(baseDate) / rc.isEffectiveRestDay(baseDate)  │
+      // │      rc.getBlockLength(baseDate) / getSchoolBreak(baseDate)            │
+      // │    例: 寒暑假不静音 → 先 const sb = getSchoolBreak(baseDate);           │
+      // │        再据 sb 覆盖下面的 silent 值。目前按静态键位清单，未接条件判断。 │
+      // └─────────────────────────────────────────────────────────────────────┘
+      const silent = CONFIG.DEVICE.SILENT_SKIP_KEYS.includes(time) ? null : action;
+      const mediaVol = CONFIG.DEVICE.MEDIA_ZERO_KEYS.includes(time)
+        ? CONFIG.DEVICE.MEDIA_ZERO_VALUE : null;
+      // only_if_current: 该键位期望的"手机当前focus"守卫值(null=无条件)。
+      // 目前统一 null；想让某键"仅当前是X才执行"，在 DEVICE.FOCUS_GUARD 里配。
+      const guard = (CONFIG.DEVICE.FOCUS_GUARD && CONFIG.DEVICE.FOCUS_GUARD[time]) || null;
+      deviceOut[time] = {
+        focus: { mode: "dnd", action, to: null, only_if_current: guard },
+        silent,
+        media_volume: mediaVol
+      };
     };
-    todayMatrix.dnd_on.forEach(t => applyDnd(t, "ON"));
-    todayMatrix.dnd_off.forEach(t => applyDnd(t, "OFF"));
+    todayMatrix.dnd_on.forEach(t => applyState(t, "ON"));
+    todayMatrix.dnd_off.forEach(t => applyState(t, "OFF"));
 
     // ── 6. 人类可读调试面板 ─────────────────────────────────────────────────
     let panel = `====================================\n`;
@@ -339,12 +371,16 @@ export default {
       dynamicOut.forEach(a => panel += `  🔔 [${a.time}] ${a.label} ← ${a.reason}\n`);
     }
 
-    panel += `\n🔕 DND 今日计划 (刺客到点读自己那个键; 只反映今天, 无键=装死不动):\n`;
-    const dndKeys = Object.keys(dndOut);
-    if (dndKeys.length === 0) {
-      panel += `  -> ∅ (今日无任何DND指令, 全天手工掌控)\n`;
+    panel += `\n📱 设备状态·今日计划 (刺客到点读自己那个键; 只反映今天, 字段null=不动):\n`;
+    const devKeys = Object.keys(deviceOut);
+    if (devKeys.length === 0) {
+      panel += `  -> ∅ (今日无任何设备状态指令, 全天手工掌控)\n`;
     } else {
-      dndKeys.sort().forEach(k => panel += `  -> [${k}] ${dndOut[k]}\n`);
+      devKeys.sort().forEach(k => {
+        const s = deviceOut[k];
+        const fmt = v => (v === null ? "—" : v);
+        panel += `  -> [${k}] focus:${s.focus.mode}=${s.focus.action}  silent:${fmt(s.silent)}  media_vol:${fmt(s.media_volume)}\n`;
+      });
     }
 
     panel += `\n🔍 DEEPLOG 审计追踪 (方括号内为规则编号, 对应 rules.js):\n` + trace.join("\n");
@@ -352,14 +388,14 @@ export default {
     // ── 7. 最终响应 ─────────────────────────────────────────────────────────
     return new Response(JSON.stringify({
       meta: {
-        version: "V9.1-RuleEngine-Auth",
+        version: "V9.2-DeviceState",
         currentTime: formatShanghai(Date.now()),
         windowLeftBound: formatShanghai(windowStart),
         windowRightBound: formatShanghai(windowEnd)
       },
       fixedAlarms: fixedOut,
       dynamicAlarms: dynamicOut,
-      dnd_schedule: dndOut,
+      device_schedule: deviceOut,
       humanReadable: panel
     }, null, 2), {
       headers: {
