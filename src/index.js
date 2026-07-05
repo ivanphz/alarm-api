@@ -63,6 +63,7 @@ import {
 import { parseICS, isEventOnDate, parseTestEvents } from "./ics-parser.js";
 import { makeRestDayChecker } from "./rest-days.js";
 import { generateDayMatrix } from "./rules.js";
+import { buildDayDeviceEntries, matchState, emptyState } from "./device-state.js";
 
 /** 常量时间字符串比较（长度不同直接 false，长度相同则逐位异或累加，不提前返回） */
 function constantTimeEqual(a, b) {
@@ -295,6 +296,47 @@ export default {
       }
     }
 
+    // ── 4.5 外部闹钟源 EXTERNAL_ALARMS(其它项目的时间点 → 手机闹钟) ─────────
+    // 标签复用 Gate-Dynamic-Event-HHMM, 与日历事件闹钟同池对账, 手机端零改动。
+    // 拉取失败只记日志, 绝不影响主流程。窗口裁剪与去重和日历闹钟完全一致。
+    for (const src of ((CONFIG.EXTERNAL_ALARMS || {}).SOURCES || [])) {
+      if (!src || src.enabled === false || !src.url) continue;
+      try {
+        const res = await fetch(src.url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        let items = [];
+        if (src.type === "ics") {
+          const evs = parseICS(await res.text());
+          for (const d of [yesterday, baseDate, tomorrow]) {
+            for (const ev of evs) {
+              if (!isEventOnDate(ev, d)) continue;
+              const t = ev.startTime || src.time || null;   // 全天事件用源配置的固定提醒时间
+              if (t) items.push({ date: d, time: t, reason: `${src.name || "外部"}:${ev.title}` });
+            }
+          }
+        } else {   // json: [ {date,time,reason} ] 或 { alarms:[...] }
+          const j = await res.json();
+          const arr = Array.isArray(j) ? j : (j.alarms || []);
+          items = arr.map(x => ({ date: x.date, time: x.time,
+            reason: `${src.name || "外部"}:${x.reason || ""}` }));
+        }
+        let added = 0;
+        for (const it of items) {
+          if (!it.date || !it.time || !/^\d{1,2}:\d{2}$/.test(it.time)) continue;
+          if (!inWindow(parseDateTime(it.date, it.time).getTime())) continue;
+          const label = `Gate-Dynamic-Event-${it.time.replace(":", "")}`;
+          const key = `${label}-${it.time}`;
+          if (seenDynamic.has(key)) continue;
+          seenDynamic.add(key);
+          dynamicOut.push({ label, time: it.time, reason: it.reason });
+          added++;
+        }
+        trace.push(`[外部闹钟] 🌐 ${src.name || src.url}: 解析${items.length}条, 窗口内新增${added}条`);
+      } catch (e) {
+        trace.push(`[外部闹钟⚠️] ${src.name || src.url} 拉取失败(${e.message}), 已跳过不影响主流程`);
+      }
+    }
+
     // 可开关闹钟全量 ON/OFF 指令（固定7个 + 上课，顺序: 固定在前 上课在后）
     const fixedOut = toggleRegistry.map(a => ({
       label: a.label,
@@ -303,66 +345,25 @@ export default {
       kind: a.kind
     }));
 
-    // ── 设备状态时刻表 device_schedule ──────────────────────────────────────
-    // ⚠️ 到点即时执行: 每个刺客在【自己那个时间点当天】触发时抓 JSON 读键。
-    //    所以只取 baseDate(今天) 这一天的决策，绝不套用给闹钟用的 24h 前瞻窗口
-    //    —— 否则刺客触发那刻今天的键被 now+15s 窗口左边界挤掉，读成明天的键(日期错位)。
-    //    今天全天的键都输出，各刺客只读自己那个键，互不干扰。
-    //
-    // 每个键 → { focus:{mode,action,switch_to,only_if_current}, silent, media_volume }:
-    //   focus.mode           目标 focus 的【iOS真实名】(来自 DEVICE.FOCUS_MODE_NAME)，
-    //                        手机端 Set Focus 用它直接指定要开哪个 focus。默认 "Do Not Disturb"。
-    //   focus.action         "ON"=进入 / "OFF"=退出 / (未来)"SWITCH"=转场
-    //   focus.to             action=SWITCH 时的目标模式；目前恒 null
-    //   focus.only_if_current 🔑守卫: 期望"手机当前focus"==此值才执行；null=无条件执行。
-    //        网关只下发这个"期望值"，真正的"读手机当前focus并比对"在【刺客本地】做
-    //        (网关在云端物理上读不到手机实时focus)。刺客用中央 CheckFocusGuard 校验，
-    //        6刺客共用、改一处即可。手机暂不支持精细判断时，刺客可无视此字段直接执行。
-    //   silent       默认跟 focus.action 同步；在 DEVICE.SILENT_SKIP_KEYS 里的键 → null(不碰)
-    //   media_volume 在 DEVICE.MEDIA_ZERO_KEYS 里的键 → 归零值；其余 → null(不动)
     const todayMatrix = matrices[1];   // matrices = [昨天, 今天, 明天]
-    const deviceOut = {};
-    const applyState = (time, action) => {   // action: "ON" / "OFF"
-      if (!CONFIG.DND.WHITELIST.includes(time)) {
-        trace.push(`[校验🚨] 设备状态键 ${time} 不在白名单内，已拦截（无刺客接收，请检查规则）`);
-        return;
-      }
-      // ┌─────────────────────────────────────────────────────────────────────┐
-      // │ 🧩 复杂规则扩展锚点: 以后想按【放假/寒暑假/工作日】等条件细化           │
-      // │    silent、media_volume（甚至 focus.only_if_current）的取值，就加在这里。│
-      // │    此处能拿到全部当天上下文，可直接调用判定器:                          │
-      // │      rc.isOfficialWorkday(baseDate) / rc.isEffectiveRestDay(baseDate)  │
-      // │      rc.getBlockLength(baseDate) / getSchoolBreak(baseDate)            │
-      // │    例: 寒暑假不静音 → 先 const sb = getSchoolBreak(baseDate);           │
-      // │        再据 sb 覆盖下面的 silent 值。目前按静态键位清单，未接条件判断。 │
-      // └─────────────────────────────────────────────────────────────────────┘
-      const silent = CONFIG.DEVICE.SILENT_SKIP_KEYS.includes(time) ? null : action;
-      const mediaVol = CONFIG.DEVICE.MEDIA_ZERO_KEYS.includes(time)
-        ? CONFIG.DEVICE.MEDIA_ZERO_VALUE : null;
-      // only_if_current: 该键位期望的"手机当前focus"守卫值(null=无条件)。
-      // 目前统一 null；想让某键"仅当前是X才执行"，在 DEVICE.FOCUS_GUARD 里配。
-      const guard = (CONFIG.DEVICE.FOCUS_GUARD && CONFIG.DEVICE.FOCUS_GUARD[time]) || null;
-      const syncAlarms = CONFIG.DEVICE.SYNC_ALARM_KEYS.includes(time);
-      deviceOut[time] = {
-        focus: { mode: CONFIG.DEVICE.FOCUS_MODE_NAME, action, switch_to: null, only_if_current: guard },
-        silent,
-        media_volume: mediaVol,
-        sync_alarms: syncAlarms   // true=这个时间点顺便跑一次闹钟对账
-      };
-    };
-    todayMatrix.dnd_on.forEach(t => applyState(t, "ON"));
-    todayMatrix.dnd_off.forEach(t => applyState(t, "OFF"));
+    // ── 5. 设备状态时刻表(字段独立引擎, 见 device-state.js) ────────────────
+    // 今/昨两天各生成一份: 今天供时点匹配+全天调试输出; 昨天供时段模式跨夜回看。
+    const deviceOut = buildDayDeviceEntries(todayMatrix, trace, "今日");
+    const deviceYesterday = buildDayDeviceEntries(matrices[0], trace, "昨日");
 
-    // ── 5.5 当前时刻匹配 current_state（通用刺客直接抓URL即得"此刻该执行的那条"）──
-    // 【默认模式】不带 ?now 且不带 testDate → 自动用网关此刻(上海时区,精确到秒)匹配。
-    //   刺客因此不需要自己读时间拼参数,直接抓 URL 就行。
-    // 【显式模式】带 ?now=HH:MM(:SS) → 用指定时间匹配(调试用)。
-    // 【纯调试】带 testDate 且不带 now → 不匹配(只看全天 device_schedule 计划)。
-    // 匹配规则: 找与 now 相差 ≤ NOW_MATCH_TOLERANCE_MIN 分钟的最近白名单键。
-    // 字段规范: 一律 小写_下划线_全称, 所有字段【始终存在】(无值=null), 绝不省略/缩写。
+    // ── 5.5 当前时刻匹配 current_state(双模式) ──────────────────────────────
+    // 模式: URL ?mode=point|segment 覆盖 > config DEVICE.STATE_MODE_DEFAULT。
+    //   point   时点: 定时刺客用(±容差命中时刻键)
+    //   segment 时段: 状态重建/手动同步用(每字段回看最近取值,区间填满,可跨昨夜)
+    // now 来源: ?now= 显式 > (无testDate时)网关此刻自动。testDate且无now = 纯调试不匹配。
+    let mode = (url.searchParams.get("mode") || CONFIG.DEVICE.STATE_MODE_DEFAULT || "point").toLowerCase();
+    if (mode !== "point" && mode !== "segment") {
+      trace.push(`[模式⚠️] ?mode="${mode}" 无效(仅 point/segment)，回退默认`);
+      mode = CONFIG.DEVICE.STATE_MODE_DEFAULT || "point";
+    }
     let currentState = null;
     let rawNow = url.searchParams.get("now");
-    let nowSource = "param";                    // param=显式指定 / auto=网关此刻(默认模式)
+    let nowSource = "param";
     if (!rawNow && !testDate) {
       rawNow = new Intl.DateTimeFormat("en-GB", {
         timeZone: CONFIG.SYSTEM.TIMEZONE,
@@ -371,42 +372,15 @@ export default {
       nowSource = "auto";
     }
     if (rawNow) {
-      const nm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(rawNow.trim());
-      if (!nm) {
-        currentState = {
-          matched: false, error: "bad_now_format", now: rawNow, now_source: nowSource,
-          matched_key: null, diff_minutes: null, state: null,
-          hint: "now 需为 HH:MM 或 HH:MM:SS"
-        };
-        trace.push(`[now🚨] ?now="${rawNow}" 格式非法，current_state 置空报错`);
-      } else {
-        const nowMin = parseInt(nm[1], 10) * 60 + parseInt(nm[2], 10);
-        const tol = CONFIG.DEVICE.NOW_MATCH_TOLERANCE_MIN;
-        let best = null, bestDiff = Infinity;
-        for (const key of Object.keys(deviceOut)) {   // 只在"今天真的有输出"的键里找
-          const diff = Math.abs(timeToMinutes(key) - nowMin);
-          if (diff <= tol && diff < bestDiff) { best = key; bestDiff = diff; }
-        }
-        if (best) {
-          currentState = {
-            matched: true, error: null, now: rawNow, now_source: nowSource,
-            matched_key: best, diff_minutes: bestDiff, state: deviceOut[best]
-          };
-          trace.push(`[now] ✅ now=${rawNow}(${nowSource}) 匹配到键 ${best}(相差${bestDiff}分,容差${tol}) → 返回该状态`);
-        } else {
-          currentState = {
-            matched: false, error: "no_slot_in_tolerance", now: rawNow, now_source: nowSource,
-            matched_key: null, diff_minutes: null, state: null,
-            hint: `当前时间不在任何白名单键±${tol}分钟内，本次不执行任何操作`
-          };
-          trace.push(`[now] ⚪ now=${rawNow}(${nowSource}) 不在任何今日键±${tol}分钟内 → 空(手机端应装死不动)`);
-        }
-      }
+      currentState = matchState({
+        mode, rawNow, nowSource, baseDate, yesterdayDate: yesterday,
+        deviceToday: deviceOut, deviceYesterday, trace
+      });
     }
 
     // ── 6. 人类可读调试面板 ─────────────────────────────────────────────────
     let panel = `====================================\n`;
-    panel += `⏰ Smart Schedule Gateway (V9.4)\n`;
+    panel += `⏰ Smart Schedule Gateway (V10.0)\n`;
     panel += `====================================\n`;
     panel += `[环境快照]: ${formatShanghai(virtualNow)}\n`;
     panel += `[窗口起点]: ${formatShanghai(windowStart)}\n`;
@@ -433,20 +407,26 @@ export default {
       devKeys.sort().forEach(k => {
         const s = deviceOut[k];
         const fmt = v => (v === null ? "—" : v);
-        panel += `  -> [${k}] focus:${s.focus.mode}=${s.focus.action}  silent:${fmt(s.silent)}  media_vol:${fmt(s.media_volume)}${s.sync_alarms ? "  🔄同步闹钟" : ""}\n`;
+        const focusStr = s.focus ? `${s.focus.mode}=${s.focus.action}` : "—(纯同步)";
+        panel += `  -> [${k}] focus:${focusStr}  silent:${fmt(s.silent)}  media_vol:${fmt(s.media_volume)}${s.sync_alarms ? "  🔄同步闹钟" : ""}\n`;
       });
     }
 
-    panel += `\n🎯 当前时刻匹配 current_state (通用刺客用 ?now=HH:MM:SS 拉取):\n`;
+    panel += `\n🎯 当前时刻匹配 current_state (?mode=point|segment, ?now=可显式指定):\n`;
     if (!currentState) {
-      panel += `  -> (本次未带 ?now 参数; 加上即返回当前该执行的那一条)\n`;
-    } else if (currentState.matched) {
-      const s = currentState.state;
-      const fmt = v => (v === null ? "—" : v);
-      panel += `  -> ✅ now=${currentState.now} 命中键 [${currentState.matched_key}] (相差${currentState.diff_minutes}分)\n`;
-      panel += `       focus:${s.focus.mode}=${s.focus.action}  silent:${fmt(s.silent)}  media_vol:${fmt(s.media_volume)}  sync_alarms:${s.sync_alarms}\n`;
+      panel += `  -> (本次未匹配: testDate调试且未带now; 生产/带now时自动输出)\n`;
     } else {
-      panel += `  -> ⚪ now=${currentState.now} 未匹配 (${currentState.error}) → 手机端应装死不动\n`;
+      const s = currentState.state;
+      const fmt = v => (v === null || v === undefined ? "—" : (typeof v === "object" ? JSON.stringify(v) : v));
+      const focusStr = s.focus ? `${s.focus.mode}=${s.focus.action}` : "—";
+      panel += `  -> 模式:${currentState.mode}  now=${currentState.now}(${currentState.now_source})  ` +
+        (currentState.matched ? `✅${currentState.matched_key ? "命中键[" + currentState.matched_key + "]" : "时段回看有值"}` :
+          `⚪未匹配(${currentState.error})`) + `\n`;
+      panel += `     focus:${focusStr}  silent:${fmt(s.silent)}  media_vol:${fmt(s.media_volume)}  sync_alarms:${s.sync_alarms}\n`;
+      if (currentState.field_sources) {
+        panel += `     来源: ` + Object.entries(currentState.field_sources)
+          .map(([f, v]) => `${f}←${v || "—"}`).join("  ") + `\n`;
+      }
     }
 
     panel += `\n🔍 DEEPLOG 审计追踪 (方括号内为规则编号, 对应 rules.js):\n` + trace.join("\n");
@@ -454,7 +434,7 @@ export default {
     // ── 7. 最终响应 ─────────────────────────────────────────────────────────
     return new Response(JSON.stringify({
       meta: {
-        version: "V9.4-AutoNow-FullFields",
+        version: "V10.0-FieldEngine",
         currentTime: formatShanghai(Date.now()),
         windowLeftBound: formatShanghai(windowStart),
         windowRightBound: formatShanghai(windowEnd)
