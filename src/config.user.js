@@ -228,7 +228,7 @@ export const USER_CONFIG = {
     //   OWN:   { "23:30": { mode: "Sleep", action: "ON" } } → 自己的独立时刻(与规则无关)。
     FOCUS: {
       MODE_NAME: "Do Not Disturb",
-      GUARD: { "07:40": "Do Not Disturb" },
+      GUARD: { "07:40": "Do Not Disturb", "13:29": "Do Not Disturb" },
       OWN: {}
     },
 
