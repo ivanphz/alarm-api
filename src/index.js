@@ -378,6 +378,16 @@ export default {
       });
     }
 
+    // ── 5.6 归一化: 给手机端一个确定的字符串旗标 ────────────────────────────
+    //   为什么: JSON 布尔 → iOS Shortcuts「文本」的呈现不是契约保证的(见过 Yes/No、
+    //   true/false、1/0 多种), 直接 `If Text is Yes` 会随系统版本静默失效。
+    //   这里在 current_state.state 上追加 sync_alarms_flag: "yes"/"no" 字符串,
+    //   手机端改读它、按字面比 "yes" 即可。原布尔 sync_alarms 原样保留,
+    //   不影响 device_schedule / 面板 / Tasker 等既有布尔契约。
+    if (currentState && currentState.state) {
+      currentState.state.sync_alarms_flag = currentState.state.sync_alarms ? "yes" : "no";
+    }
+
     // ── 6. 人类可读调试面板 ─────────────────────────────────────────────────
     let panel = `====================================\n`;
     panel += `⏰ Smart Schedule Gateway (V10.0)\n`;
