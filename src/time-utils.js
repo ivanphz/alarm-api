@@ -28,6 +28,16 @@ export function getShanghaiDateString(offsetDays = 0) {
   }).format(targetTime);
 }
 
+/** 取上海时区的当前时钟字符串 "HH:MM"（withSeconds=true → "HH:MM:SS"） */
+export function getShanghaiClockString(withSeconds = false) {
+  const opts = {
+    timeZone: CONFIG.SYSTEM.TIMEZONE,
+    hour: "2-digit", minute: "2-digit", hour12: false
+  };
+  if (withSeconds) opts.second = "2-digit";
+  return new Intl.DateTimeFormat("en-GB", opts).format(Date.now());
+}
+
 /** 日期字符串加减天数（UTC 正午锚点，跨月跨年安全） */
 export function addDaysToDateString(dateStr, offsetDays) {
   const ms = new Date(dateStr + "T12:00:00Z").getTime();
