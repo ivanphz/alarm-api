@@ -224,11 +224,15 @@ export const DEFAULT_CONFIG = {
 
     // ── 字段: focus(勿扰/专注) ──────────────────────────────────────────────
     //   规则时刻来自规则引擎(rules.js R6); MODE_NAME 必须是 iOS 里的真实 focus 名。
-    //   GUARD: { "07:40": "Do Not Disturb" } → 该时刻仅当手机当前focus==此值才执行。
-    //   OWN:   { "23:30": { mode: "Sleep", action: "ON" } } → 自己的独立时刻(与规则无关)。
+    //   OWN —— 每时刻定制的唯一入口(一处定义, V10.1 已收编旧 GUARD/CUSTOM_ACTIONS):
+    //     "22:00": "ON"                                    简写: 独立时刻直接开/关
+    //     "07:40": { only_if_current: "Do Not Disturb" }   给规则动作挂守卫(action 继承规则)
+    //     "23:30": { mode: "Sleep", action: "ON" }         独立时刻开别的 focus
+    //     "13:29": { action: null }                        压制该时刻的规则动作
+    //     "08:00": { action: "OFF", switch_to: "" }        预留: 清场语义(手机端识别 switch_to)
+    //   对象写法逐字段合并: 写了的以 OWN 为准, action 未写则继承当日规则产出。
     FOCUS: {
       MODE_NAME: "Do Not Disturb",
-      GUARD: {},
       OWN: {}
     },
 
@@ -255,12 +259,7 @@ export const DEFAULT_CONFIG = {
     //   这些时刻 sync_alarms:true,刺客读到就跑一次 SyncAlarms 对账。每天雷打不动。
     SYNC_ALARMS: {
       KEYS: ["07:40", "13:29", "22:25"]
-    },
-
-    // ── 跨字段覆盖层(最高优先级,可选) ───────────────────────────────────────
-    //   一个时刻同时动多个字段时用; 未知/未来字段原样透传(手机认识就执行,不认识忽略)。
-    //   例: "06:00": { silent: "OFF", media_volume: 0.5 }
-    CUSTOM_ACTIONS: {}
+    }
   },
 
   // ───────────────────────────────────────────────────────────────────────────
