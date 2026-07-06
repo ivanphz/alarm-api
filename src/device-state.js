@@ -47,23 +47,32 @@ const FIELD_REGISTRY = {
   // 未来: low_power: (key) => { ... }  ← 加一行即接入
 };
 
-/** focus 字段求值（独立于其它字段；OWN 优先于规则） */
+/**
+ * focus 字段求值 —— FOCUS.OWN 一处定义所有每时刻定制（V10.1 收编 GUARD/CUSTOM_ACTIONS）:
+ *   OWN 值两种写法:
+ *     "ON"/"OFF"                       简写 = { action: "ON"/"OFF" }
+ *     { action?, switch_to?, only_if_current?, mode? }   对象 = 逐字段与规则合并:
+ *       · 写了的字段以 OWN 为准；action 没写 → 继承规则引擎当日动作
+ *       · action 显式写 null → 压制该时刻的规则动作(等于"这个点闭嘴")
+ *   例: "07:40": { only_if_current: "Do Not Disturb" }
+ *       → 工作日规则产出 OFF + 守卫；周末规则不产出 → focus 为 null,守卫自然失效
+ *   最终 action 与 switch_to 均为空 → 返回 null(无事可做,光有守卫无意义)
+ */
 function evalFocus(key, focusAction) {
   const fc = CONFIG.DEVICE.FOCUS;
-  const own = (fc.OWN || {})[key];
-  if (own) {
-    return {
-      mode: own.mode ?? fc.MODE_NAME, action: own.action ?? null,
-      switch_to: own.switch_to ?? null, only_if_current: own.only_if_current ?? null
-    };
-  }
-  if (focusAction) {
-    return {
-      mode: fc.MODE_NAME, action: focusAction,
-      switch_to: null, only_if_current: (fc.GUARD || {})[key] || null
-    };
-  }
-  return null;
+  let own = (fc.OWN || {})[key];
+  if (own == null && !focusAction) return null;
+  if (typeof own === "string") own = { action: own };
+  own = own || {};
+  const action = ("action" in own) ? own.action : (focusAction || null);
+  const switch_to = own.switch_to ?? null;
+  if (action == null && switch_to == null) return null;
+  return {
+    mode: own.mode ?? fc.MODE_NAME,
+    action,
+    switch_to,
+    only_if_current: own.only_if_current ?? null
+  };
 }
 
 /**
@@ -85,13 +94,12 @@ export function buildDayDeviceEntries(dayMatrix, trace, dayLabel) {
     }
   }
 
-  // 2) 键并集 = focus规则键 ∪ 各字段OWN ∪ 同步锚点 ∪ 跨字段CUSTOM_ACTIONS
+  // 2) 键并集 = focus规则键 ∪ 各字段OWN ∪ 同步锚点
   const keys = new Set(Object.keys(focusAt));
   for (const k of Object.keys(D.FOCUS.OWN || {})) keys.add(k);
   for (const k of Object.keys(D.SILENT.OWN || {})) keys.add(k);
   for (const k of Object.keys(D.MEDIA_VOLUME.OWN || {})) keys.add(k);
   for (const k of (D.SYNC_ALARMS.KEYS || [])) keys.add(k);
-  for (const k of Object.keys(D.CUSTOM_ACTIONS || {})) keys.add(k);
 
   // 3) 逐键逐字段独立求值
   const out = {};
@@ -107,20 +115,6 @@ export function buildDayDeviceEntries(dayMatrix, trace, dayLabel) {
     };
     for (const [field, evaluate] of Object.entries(FIELD_REGISTRY)) {
       entry[field] = evaluate(key, ctx);
-    }
-    // 4) CUSTOM_ACTIONS 跨字段覆盖层(最高优先级; 未知字段原样透传给手机)
-    const spec = (D.CUSTOM_ACTIONS || {})[key];
-    if (spec) {
-      for (const [field, val] of Object.entries(spec)) {
-        if (field === "focus" && val && typeof val === "object") {
-          entry.focus = {
-            mode: val.mode ?? null, action: val.action ?? null,
-            switch_to: val.switch_to ?? null, only_if_current: val.only_if_current ?? null
-          };
-        } else {
-          entry[field] = val;
-        }
-      }
     }
     out[key] = entry;
   }
