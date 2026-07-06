@@ -58,7 +58,7 @@ const AUTH_DISABLED_DEFAULT = false;
 
 import { CONFIG } from "./config.js";
 import {
-  getShanghaiDateString, addDaysToDateString, parseDateTime, formatShanghai, timeToMinutes
+  getShanghaiDateString, getShanghaiClockString, addDaysToDateString, parseDateTime, formatShanghai, timeToMinutes
 } from "./time-utils.js";
 import { parseICS, isEventOnDate, parseTestEvents } from "./ics-parser.js";
 import { makeRestDayChecker } from "./rest-days.js";
@@ -71,6 +71,26 @@ function constantTimeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/**
+ * 时钟归一化。容忍手输，统一成 matchState 认得的 "HH:MM"（或带秒 "HH:MM:SS"）。
+ *   "7"        → "07:00"   (只给小时，分钟补 :00)
+ *   "7:5"      → "07:05"   (补零)
+ *   "07:40"    → "07:40"
+ *   "7:40:30"  → "07:40:30"
+ *   非法/越界  → null      (交由调用方降级实时)
+ */
+function normClock(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = /^(\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?$/.exec(s);
+  if (!m) return null;
+  const h = +m[1], mi = m[2] != null ? +m[2] : 0, se = m[3] != null ? +m[3] : 0;
+  if (h > 23 || mi > 59 || se > 59) return null;
+  const p = n => String(n).padStart(2, "0");
+  return m[3] != null ? `${p(h)}:${p(mi)}:${p(se)}` : `${p(h)}:${p(mi)}`;
 }
 
 /**
@@ -153,7 +173,33 @@ export default {
 
     // ── 1. 时间环境（生产 or 仿真沙盒）──────────────────────────────────────
     const rawTestDate = url.searchParams.get("testDate");
-    const testTime = url.searchParams.get("testTime");
+
+    // 统一时钟输入: now(POINT匹配时钟) 与 testTime(沙盒锚点) 归一化 + 互填 + 非法降级。
+    //   归一化: "7"→"07:00"、"7:5"→"07:05" (normClock)
+    //   非法(越界/乱码)→ 降级到实时上海时钟 (和 testDate 非法降级同理)
+    //   互填: 只带 now 自动带出 testTime; 只带 testTime 自动带出 now。?linkTime=0 关闭。
+    //         仅补「完全省略」的一侧, 两侧都显式给出时各自生效(允许故意让匹配/锚点错位)。
+    const realShanghaiHM = () => getShanghaiClockString();
+    const linkTime = url.searchParams.get("linkTime") !== "0";
+
+    const nowRaw  = url.searchParams.get("now");
+    const testRaw = url.searchParams.get("testTime");
+    let clockNow  = normClock(nowRaw);
+    let clockTest = normClock(testRaw);
+    const nowBad  = nowRaw  != null && nowRaw.trim()  !== "" && clockNow  == null;
+    const testBad = testRaw != null && testRaw.trim() !== "" && clockTest == null;
+
+    if (nowBad)  { clockNow  = realShanghaiHM(); trace.push(`[环境] ⚠️ now="${nowRaw}" 非法 → 降级实时 ${clockNow}`); }
+    if (testBad) { clockTest = realShanghaiHM(); trace.push(`[环境] ⚠️ testTime="${testRaw}" 非法 → 降级实时 ${clockTest}`); }
+
+    if (linkTime) {
+      if (clockNow && clockTest == null && testRaw == null) {
+        clockTest = clockNow; trace.push(`[环境] 🔗 只带 now → 自动带出 testTime=${clockTest}`);
+      } else if (clockTest && clockNow == null && nowRaw == null) {
+        clockNow = clockTest; trace.push(`[环境] 🔗 只带 testTime → 自动带出 now=${clockNow}`);
+      }
+    }
+    const testTime = clockTest;   // 下游锚点沿用归一化后的值
 
     // testDate 合法性校验: 必须 YYYY-MM-DD，月 01-12、日 01-31，且能构成真实日期。
     // 非法(如月/日为 00、2月30日、格式错) → 忽略 testDate，回退到实时 now。
@@ -362,13 +408,10 @@ export default {
       mode = CONFIG.DEVICE.STATE_MODE_DEFAULT || "point";
     }
     let currentState = null;
-    let rawNow = url.searchParams.get("now");
-    let nowSource = "param";
+    let rawNow = clockNow;                          // 已归一化(含 testTime 互填 / 非法降级)
+    let nowSource = clockNow ? "param" : "auto";
     if (!rawNow && !testDate) {
-      rawNow = new Intl.DateTimeFormat("en-GB", {
-        timeZone: CONFIG.SYSTEM.TIMEZONE,
-        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
-      }).format(Date.now());
+      rawNow = getShanghaiClockString(true);        // 生产: 网关此刻(带秒)
       nowSource = "auto";
     }
     if (rawNow) {
