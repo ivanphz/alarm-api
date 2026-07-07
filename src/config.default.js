@@ -222,37 +222,52 @@ export const DEFAULT_CONFIG = {
     //           SYNC_ALARMS: 时段模式(状态重建)是否顺带跑一次闹钟对账(建议true)
     SEGMENT: { LOOKBACK_HOURS: 26, FUTURE_SNAP_MIN: 0, SYNC_ALARMS: true },
 
-    // ── 字段: focus(勿扰/专注) ──────────────────────────────────────────────
-    //   规则时刻来自规则引擎(rules.js R6); MODE_NAME 必须是 iOS 里的真实 focus 名。
-    //   OWN —— 每时刻定制的唯一入口(一处定义, V10.1 已收编旧 GUARD/CUSTOM_ACTIONS):
-    //     "22:00": "ON"                                    简写: 独立时刻直接开/关
-    //     "07:40": { only_if_current: "Do Not Disturb" }   给规则动作挂守卫(action 继承规则)
-    //     "23:30": { mode: "Sleep", action: "ON" }         独立时刻开别的 focus
-    //     "13:29": { action: null }                        压制该时刻的规则动作
-    //     "08:00": { action: "OFF", switch_to: "" }        预留: 清场语义(手机端识别 switch_to)
-    //   对象写法逐字段合并: 写了的以 OWN 为准, action 未写则继承当日规则产出。
-    FOCUS: {
-      MODE_NAME: "Do Not Disturb",
-      OWN: {}
-    },
+    // ── 字段注册表 FIELDS —— 每个字段声明: 订阅哪张规则 + 怎么微调 + 输出形态 ──
+    //
+    //   规则(schedule)由引擎产出、命名(见 device-state.js SCHEDULE_NAMES, 当前只有 "dnd")。
+    //   字段用四个正交旋钮描述自己, 彼此零依赖(删任一字段不影响其它):
+    //     KIND   "focus"=输出 focus 对象(带 mode/守卫/switch_to); "scalar"=输出标量或 null
+    //     USE    订阅哪张规则名; null=不订阅, 只吃自己的 OWN
+    //     MAP    规则值→本字段值 的映射(缺省恒等); 例 { ON:"ON", OFF:"OFF" }
+    //     SKIP   复用规则但屏蔽这些时刻; 例 silent 不碰午间 12:15/13:29
+    //     OWN    本字段独立时刻(最高优先级, 叠加/覆盖规则; 支持 falsy 0/空串)
+    //            focus 的 OWN 见下方写法; scalar 的 OWN 值就是最终标量
+    //
+    //   👉 silent 与 focus 都 USE "dnd" = 复用同一张规则, 但互不依赖:
+    //      删掉 focus 整节, silent 仍从 dnd 正常渲染。想让某字段独立→改它的 USE。
+    //      没有字段 USE 某规则时, 审计日志会把它标为孤儿(可删)。
+    FIELDS: {
 
-    // ── 字段: silent(静音) —— 独立个体 ──────────────────────────────────────
-    //   FOLLOW_FOCUS: true = "跟随focus的ON/OFF"是 silent 自己选的规则,想解耦改 false。
-    //   SKIP_KEYS: 跟随时跳过这些时刻(不碰静音)。
-    //   OWN: { "05:00": "ON" } → 自己的独立时刻,任意时间独立开关,与focus无关。
-    SILENT: {
-      FOLLOW_FOCUS: true,
-      SKIP_KEYS: ["12:15", "13:29"],
-      OWN: {}
-    },
+      // focus(勿扰/专注): 订阅 dnd, 渲染成 focus 对象。MODE_NAME 必须是 iOS 真实 focus 名。
+      //   OWN 写法(每时刻定制的唯一入口, 逐字段与规则合并):
+      //     "22:00": "ON"                                  简写: 独立时刻直接开/关
+      //     "07:40": { only_if_current: "Do Not Disturb" } 给规则动作挂守卫(action 继承规则)
+      //     "23:30": { mode: "Sleep", action: "ON" }       独立时刻开别的 focus
+      //     "13:29": { action: null }                      压制该时刻的规则动作(这个点闭嘴)
+      //     "08:00": { action: "OFF", switch_to: "" }      预留: 清场语义(手机端识别 switch_to)
+      focus: {
+        KIND: "focus",
+        USE: "dnd",
+        MODE_NAME: "Do Not Disturb",
+        OWN: {}
+      },
 
-    // ── 字段: media_volume(媒体音量) —— 独立个体 ────────────────────────────
-    //   ZERO_KEYS: 这些时刻归零(不区分放假; 07:40/13:29因同步锚点每天都存在→每天归零)。
-    //   OWN: { "03:00": 0.3 } → 自己的独立时刻,任意时间设任意音量(0~1)。
-    MEDIA_VOLUME: {
-      ZERO_KEYS: ["07:40", "12:15", "13:29", "20:55"],
-      ZERO_VALUE: 0,
-      OWN: {}
+      // silent(静音): 复用 dnd(与 focus 无关), 屏蔽午间。想解耦→USE 改别的规则或 null。
+      //   MAP 缺省恒等(ON→静音开, OFF→静音关)。OWN: { "05:00": "ON" } 可任意时刻独立开关。
+      silent: {
+        KIND: "scalar",
+        USE: "dnd",
+        SKIP: ["12:15", "13:29"],
+        OWN: {}
+      },
+
+      // media_volume(媒体音量): 不订阅任何规则(USE:null), 完全独立, 只吃 OWN。
+      //   值域 0~1(手机端 Set Volume 按分数)。这些时刻归零, 想加时刻直接在 OWN 加一行。
+      media_volume: {
+        KIND: "scalar",
+        USE: null,
+        OWN: { "07:40": 0, "12:15": 0, "13:29": 0, "20:55": 0 }
+      }
     },
 
     // ── 闹钟同步锚点 —— 特殊者(闹钟是前瞻性的,与即时状态不同) ────────────────
@@ -291,7 +306,7 @@ export const DEFAULT_CONFIG = {
   //   GOD_MODE   = 完全手动接管当天（事件 DESCRIPTION 填 JSON，格式见 rules.js R1）
   // ───────────────────────────────────────────────────────────────────────────
   KEYWORDS: {
-    GOD_MODE:   ["上帝模式", "JSON"],
+    GOD_MODE:   ["上帝模式", "JSON"],   // 完整用法/可复制模板见 docs/god-mode.md
     LEAVE:      ["休假", "请假", "年假"],
     WORK_EVENT: ["出差", "会议", "外勤", "风勘", "覆盖", "晚到", "早到", "早起"]
   },
