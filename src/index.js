@@ -94,6 +94,68 @@ function normClock(raw) {
 }
 
 /**
+ * 外部源闹钟标签: Gate-ES-<源代号>-<uid>。
+ *   前缀自成一族(区别于内部动态闹钟 Gate-Dynamic-Event-), 短、可读、可溯源。
+ *   ⚠️ 手机端 SyncAlarms 对账须同时认 Gate-Dynamic-Event* 与 Gate-ES* 两个前缀。
+ *   身份由 uid 决定(非时间), 故同分钟可并存多条、跨天可幂等对账。
+ *   净化: 仅留 [A-Za-z0-9_.-]; code 截 16、uid 截 40; uid 空则判无效(拒收)。
+ */
+function esLabel(code, uid) {
+  const clean = s => String(s == null ? "" : s).trim()
+    .replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  const c = clean(code).slice(0, 16) || "src";
+  const u = clean(uid).slice(0, 40);
+  return u ? `Gate-ES-${c}-${u}` : null;
+}
+
+/** 求某 IANA 时区在给定墙上时间处的 UTC 偏移(分钟, 东为正); 失败返回 null */
+function ianaOffsetMinutes(tz, dateStr, timeStr) {
+  try {
+    const [Y, Mo, D] = dateStr.split("-").map(Number);
+    const [h, mi] = timeStr.split(":").map(Number);
+    const asUTC = Date.UTC(Y, Mo - 1, D, h, mi);
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false
+    }).formatToParts(new Date(asUTC));
+    const g = t => +parts.find(p => p.type === t).value;
+    const shown = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour") % 24, g("minute"));
+    return Math.round((shown - asUTC) / 60000);
+  } catch { return null; }
+}
+
+/**
+ * 把"源时区的墙上时间"换算成"上海(+8)墙上时间"(手机闹钟按墙上时间响)。
+ *   tz 缺省/Asia/Shanghai/+08:00 → 原样返回(绝大多数乙方都是 +8)。
+ *   "Z"/"UTC" 或 ±HH:MM 固定偏移 → 精确换算; IANA 名 → Intl 求偏移。
+ *   换算可能跨天 → date 会随之变化。无法识别的 tz → 原样返回并置 tzWarn。
+ */
+function toShanghaiWall(dateStr, timeStr, tz) {
+  const SH = 8 * 60;
+  if (tz == null || tz === "" || tz === "Asia/Shanghai" ||
+      tz === "+08:00" || tz === "+0800" || tz === "Asia/Hong_Kong") {
+    return { date: dateStr, time: timeStr };
+  }
+  let off = null;
+  const z = /^([+-])(\d{2}):?(\d{2})$/.exec(tz);
+  if (tz === "Z" || tz === "UTC") off = 0;
+  else if (z) off = (z[1] === "-" ? -1 : 1) * (+z[2] * 60 + +z[3]);
+  else off = ianaOffsetMinutes(tz, dateStr, timeStr);
+  if (off == null) return { date: dateStr, time: timeStr, tzWarn: true };
+  const [Y, Mo, D] = dateStr.split("-").map(Number);
+  const [h, mi] = timeStr.split(":").map(Number);
+  const sh = new Date(Date.UTC(Y, Mo - 1, D, h, mi) - off * 60000 + SH * 60000);
+  const p = n => String(n).padStart(2, "0");
+  return {
+    date: `${sh.getUTCFullYear()}-${p(sh.getUTCMonth() + 1)}-${p(sh.getUTCDate())}`,
+    time: `${p(sh.getUTCHours())}:${p(sh.getUTCMinutes())}`
+  };
+}
+
+/** 默认识别标签正则: [[ES:uid]] 放事件任意字段; 捕获 uid; 裸 [[ES]] 则回退原生 UID */
+const ES_MARK_DEFAULT = /\[\[ES(?::\s*([^\]]+?))?\s*\]\]/;
+
+/**
  * 宽容解析"URL 列表"配置，吃得下多种写法:
  *   · 单条:            https://a.ics
  *   · 多条(逗号/分号/换行/空格任意混合分隔): https://a.ics, https://b.ics
@@ -342,44 +404,104 @@ export default {
       }
     }
 
-    // ── 4.5 外部闹钟源 EXTERNAL_ALARMS(其它项目的时间点 → 手机闹钟) ─────────
-    // 标签复用 Gate-Dynamic-Event-HHMM, 与日历事件闹钟同池对账, 手机端零改动。
-    // 拉取失败只记日志, 绝不影响主流程。窗口裁剪与去重和日历闹钟完全一致。
-    for (const src of ((CONFIG.EXTERNAL_ALARMS || {}).SOURCES || [])) {
-      if (!src || src.enabled === false || !src.url) continue;
+    // ── 4.5 外部闹钟源 EXTERNAL_ALARMS(乙方项目的具体闹钟点 → 手机闹钟) ─────────
+    // 【定位】本网关是"具体点搬运工": 只收乙方算好的具体 date+time, 做 24h 裁剪+幂等对账。
+    //   不做任何排期/循环/业务计算(工作日、间隔、自然月去重…都由乙方算好再喂进来)。
+    // 【准入 = 强制识别; 完整对接契约见 docs/external-alarms.md】:
+    //   ICS  在事件【任意字段】(标题/备注/分类/X-)放一个自带 uid 的标签 [[ES:uid]] →
+    //        标签在即准入, 括号内即 uid(可读或 crc32 随乙方; 裸 [[ES]] 则回退 VEVENT 原生 UID)。
+    //        源级 markPattern 可覆盖默认正则(须含1个 uid 捕获组)。
+    //   JSON 乙方全权构造 payload, 每条必带 uid 字段, 有合法 uid 即准入。
+    //   标签统一 Gate-ES-<源code>-<uid>; 身份靠 uid(非时间), 同分钟可并存、跨天可对账。
+    //   时区: 默认 Asia/Shanghai 墙上时间; ICS 遇 Z/TZID、JSON 带 tz → 换算到 +8。
+    //   全天(ICS): 源级 allDay = skip | default(+time, 默认09:30) | error。
+    // 源 = config.SOURCES(公开URL,明文) + env.EXTERNAL_ALARMS(隐私URL,Secret) 并集。
+    // 单源超时(默认5s)/失败/脏数据只记日志, 绝不拖垮主流程。
+    const cfgSources = (CONFIG.EXTERNAL_ALARMS || {}).SOURCES || [];
+    let envSources = [];
+    if (env && env.EXTERNAL_ALARMS) {
       try {
-        const res = await fetch(src.url);
+        const p = JSON.parse(env.EXTERNAL_ALARMS);
+        envSources = Array.isArray(p) ? p : (p.SOURCES || []);
+        trace.push(`[外部闹钟] 🔐 env.EXTERNAL_ALARMS 解析出 ${envSources.length} 个隐私源`);
+      } catch (e) {
+        trace.push(`[外部闹钟🚨] env.EXTERNAL_ALARMS 不是合法 JSON 数组，已整体忽略: ${e.message}`);
+      }
+    }
+    for (const src of [...cfgSources, ...envSources]) {
+      if (!src || src.enabled === false || !src.url) continue;
+      const nm = src.name || src.url;
+      const code = src.code || src.name || "src";
+      const srcTz = src.tz || null;
+      try {
+        // 超时保护: 慢源不拖垮整体响应(串行拉取)
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), src.timeoutMs || 5000);
+        let res;
+        try { res = await fetch(src.url, { signal: ctrl.signal }); }
+        finally { clearTimeout(to); }
         if (!res.ok) throw new Error("HTTP " + res.status);
+
+        // 统一成候选项 { uid, date, time, reason, tz }
         let items = [];
+        let rejMark = 0, rejAllDay = 0;
         if (src.type === "ics") {
+          const markRe = src.markPattern ? new RegExp(src.markPattern) : ES_MARK_DEFAULT;
           const evs = parseICS(await res.text());
           for (const d of [yesterday, baseDate, tomorrow]) {
             for (const ev of evs) {
               if (!isEventOnDate(ev, d)) continue;
-              const t = ev.startTime || src.time || null;   // 全天事件用源配置的固定提醒时间
-              if (t) items.push({ date: d, time: t, reason: `${src.name || "外部"}:${ev.title}` });
+              const m = markRe.exec(ev._scan || "");     // 识别标签放【任意字段】都能命中
+              if (!m) { rejMark++; continue; }           // 无标签 → 不准入(不误收无关事件)
+              const uid = (m[1] && m[1].trim()) || ev.uid;   // 标签内 uid; 裸标签回退原生 UID
+              // 时间: 有时分用之; 全天按策略
+              let time = normClock(ev.startTime);
+              if (!time) {
+                const policy = src.allDay || "default";
+                if (policy === "skip") { rejAllDay++; continue; }
+                if (policy === "error" && !src.time) { rejAllDay++; continue; }
+                time = normClock(src.time || "09:30");
+              }
+              items.push({ uid, date: d, time: time.slice(0, 5),
+                           tz: ev.startTZ || srcTz, reason: `${nm}:${ev.title || ""}` });
             }
           }
-        } else {   // json: [ {date,time,reason} ] 或 { alarms:[...] }
+        } else {   // json: [ { uid, date, time, reason, tz? } ] 或 { alarms:[...] }
           const j = await res.json();
           const arr = Array.isArray(j) ? j : (j.alarms || []);
-          items = arr.map(x => ({ date: x.date, time: x.time,
-            reason: `${src.name || "外部"}:${x.reason || ""}` }));
+          items = arr.map(x => {
+            const t = normClock(x.time);
+            return { uid: x.uid, date: x.date, time: t ? t.slice(0, 5) : null,
+                     tz: x.tz || srcTz, reason: `${nm}:${x.reason || ""}` };
+          });
         }
-        let added = 0;
+
+        // 统一: uid准入 → 时区换算 → 格式/窗口校验 → 去重
+        let added = 0, rejUid = 0, rejFmt = 0, rejWin = 0, tzWarn = 0;
         for (const it of items) {
-          if (!it.date || !it.time || !/^\d{1,2}:\d{2}$/.test(it.time)) continue;
-          if (!inWindow(parseDateTime(it.date, it.time).getTime())) continue;
-          const label = `Gate-Dynamic-Event-${it.time.replace(":", "")}`;
-          const key = `${label}-${it.time}`;
-          if (seenDynamic.has(key)) continue;
-          seenDynamic.add(key);
-          dynamicOut.push({ label, time: it.time, reason: it.reason });
+          const label = esLabel(code, it.uid);           // 无/净化后空 uid → null
+          if (!label) { rejUid++; continue; }
+          if (!it.date || !it.time || !/^\d{4}-\d{2}-\d{2}$/.test(it.date) || !/^\d{2}:\d{2}$/.test(it.time)) { rejFmt++; continue; }
+          const w = toShanghaiWall(it.date, it.time, it.tz);   // → 上海墙上时间(可能跨天)
+          if (w.tzWarn) tzWarn++;
+          if (!inWindow(parseDateTime(w.date, w.time).getTime())) { rejWin++; continue; }
+          if (seenDynamic.has(label)) continue;          // 按 uid(标签)去重
+          seenDynamic.add(label);
+          dynamicOut.push({ label, time: w.time, reason: it.reason });
           added++;
         }
-        trace.push(`[外部闹钟] 🌐 ${src.name || src.url}: 解析${items.length}条, 窗口内新增${added}条`);
+        const rej = [];
+        if (rejMark)   rej.push(`无标签${rejMark}`);
+        if (rejAllDay) rej.push(`全天${rejAllDay}`);
+        if (rejUid)    rej.push(`无uid${rejUid}`);
+        if (rejFmt)    rej.push(`格式${rejFmt}`);
+        if (rejWin)    rej.push(`窗口外${rejWin}`);
+        if (tzWarn)    rej.push(`时区未识别${tzWarn}`);
+        trace.push(`[外部闹钟] 🌐 ${nm}(${code}): 候选${items.length} 窗口内新增${added}` +
+          (rej.length ? ` (拒/警:${rej.join("/")})` : ""));
       } catch (e) {
-        trace.push(`[外部闹钟⚠️] ${src.name || src.url} 拉取失败(${e.message}), 已跳过不影响主流程`);
+        const why = e.name === "AbortError" ? `超时>${src.timeoutMs || 5000}ms` : e.message;
+        trace.push(`[外部闹钟⚠️] ${nm} 拉取失败(${why}), 已跳过不影响主流程`);
       }
     }
 
