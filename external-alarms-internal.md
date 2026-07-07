@@ -35,15 +35,25 @@
   - 未命中 = 不采纳（计入日志 `无标签N`）。
   - 「标签放任意字段」就是靠扫 `_scan` 实现的，标题/备注/CATEGORIES/X- 都在里面。
 
-## 3. 标签体系（★ 手机端要跟着改）
+## 3. 标签体系（★ 网关拼时间，手机端认前缀）
 
-- 外部源闹钟 label = **`Gate-ES-<code>-<uid>`**，自成一族，区别于内部动态闹钟 `Gate-Dynamic-Event-*`。
-- 身份靠 uid（非时间）→ 同分钟可并存多条、跨天可幂等对账。净化: `[A-Za-z0-9_.-]`，code≤16 / uid≤40。
+- 外部源闹钟 label = **`Gate-ES-<code>-<uid>-<HHMM>`**，自成一族，区别于内部动态闹钟 `Gate-Dynamic-Event-*`。
+- **为什么时间(HHMM)必须进 label（血泪教训，勿删此段）**：
+  手机端 SyncAlarms 只能按名称比对，且 iOS 快捷指令**没有"改现有闹钟时间"的动作**（只能
+  Create/TurnOn/TurnOff/Delete）。所以"改时间生效"的**唯一**机制 = label 变 → 旧的对账关、
+  新时间重建。若 label 不含时间：同 uid 改时间 → `Find Alarms where 名称 is <同名>` 命中旧的 →
+  只 `Turn On` → **时间永不更新（静默失效）**。这是必须避免的坑。
+- **时间由网关拼，不由乙方**：乙方 uid 是纯逻辑身份（bucket 规范，不含时间）；网关把
+  **时区换算后的最终墙上时间**拼进 label。乙方改时间 = 吐同 uid + 新 time，网关自动生成新 label。
+  故：不分两种前缀、不做 vendor 开关、不放 json/ics 字段——统一网关不变量，无 footgun。
+- **手机端零额外逻辑**：`-HHMM` 在 label 内部。"清单外同前缀就关"用**前缀** `Gate-ES*` 匹配
+  （不受 HHMM 影响）；"找到同名就开/没有就建"用**精确 label**（每个时间版本是不同精确名）。
+  所以手机端只需认 `Gate-ES*` 一个前缀即可，无需解析 HHMM。
+- 身份 = uid + 时间；净化 `[A-Za-z0-9_.-]`，code≤16 / uid≤40。
 - **⚠️ 手机端 SyncAlarms 的"清单外就关"对账，必须同时认两个前缀**：
-  `Gate-Dynamic-Event*`（内部）与 `Gate-ES*`（外部）。
-  Shortcut 里那段"关闭不在清单里的动态闹钟"的 `Find Alarms where 名称 contains Gate-Dynamic-Event`
-  要改成**匹配两个前缀**（加一条 `或 名称 contains Gate-ES`，或改成统一前缀 `Gate-` 的 contains）。
-  **不改的后果**：外部源闹钟能建、但"取消(不再吐uid)"时不会被关 → 变成关不掉的僵尸。
+  `Gate-Dynamic-Event*`（内部）与 `Gate-ES*`（外部）。那段 `Find Alarms where 名称 contains
+  Gate-Dynamic-Event` 要改成**同时匹配 `Gate-ES`**（加一条 or，或改成 contains `Gate-`）。
+  **不改的后果**：外部源闹钟能建、但"取消/改时间"时旧的关不掉 → 关不掉的僵尸。
 
 ## 4. 时区（修了个真 bug）
 
