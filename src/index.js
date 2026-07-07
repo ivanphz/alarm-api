@@ -63,7 +63,7 @@ import {
 import { parseICS, isEventOnDate, parseTestEvents } from "./ics-parser.js";
 import { makeRestDayChecker } from "./rest-days.js";
 import { generateDayMatrix } from "./rules.js";
-import { buildDayDeviceEntries, matchState, emptyState } from "./device-state.js";
+import { buildDayDeviceEntries, matchState, emptyState, auditFieldRules } from "./device-state.js";
 
 /** 常量时间字符串比较（长度不同直接 false，长度相同则逐位异或累加，不提前返回） */
 function constantTimeEqual(a, b) {
@@ -394,6 +394,7 @@ export default {
     const todayMatrix = matrices[1];   // matrices = [昨天, 今天, 明天]
     // ── 5. 设备状态时刻表(字段独立引擎, 见 device-state.js) ────────────────
     // 今/昨两天各生成一份: 今天供时点匹配+全天调试输出; 昨天供时段模式跨夜回看。
+    auditFieldRules(trace);            // 自检: 订阅关系 + 孤儿规则 + 悬空订阅
     const deviceOut = buildDayDeviceEntries(todayMatrix, trace, "今日");
     const deviceYesterday = buildDayDeviceEntries(matrices[0], trace, "昨日");
 
