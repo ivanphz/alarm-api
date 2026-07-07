@@ -94,18 +94,23 @@ function normClock(raw) {
 }
 
 /**
- * 外部源闹钟标签: Gate-ES-<源代号>-<uid>。
+ * 外部源闹钟标签: Gate-ES-<源代号>-<uid>-<HHMM>。
  *   前缀自成一族(区别于内部动态闹钟 Gate-Dynamic-Event-), 短、可读、可溯源。
  *   ⚠️ 手机端 SyncAlarms 对账须同时认 Gate-Dynamic-Event* 与 Gate-ES* 两个前缀。
- *   身份由 uid 决定(非时间), 故同分钟可并存多条、跨天可幂等对账。
+ *   身份 = uid + 时间: 手机端只按【名称】比对且无"改现有闹钟时间"的动作, 故把时间编进
+ *     label —— 同 uid 改时间 → label 变 → 旧的(不在清单)被关、新时间重建, 时间才会真正更新。
+ *     (若 label 不含时间, 改时间会因"同名已存在"只被 Turn On、时间永不更新, 这是必须避免的坑。)
  *   净化: 仅留 [A-Za-z0-9_.-]; code 截 16、uid 截 40; uid 空则判无效(拒收)。
+ * @param {string} hhmm 已归一化的 "HH:MM"; 内部转 "HHMM" 拼接
  */
-function esLabel(code, uid) {
+function esLabel(code, uid, hhmm) {
   const clean = s => String(s == null ? "" : s).trim()
     .replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
   const c = clean(code).slice(0, 16) || "src";
   const u = clean(uid).slice(0, 40);
-  return u ? `Gate-ES-${c}-${u}` : null;
+  if (!u) return null;
+  const hm = /^(\d{2}):(\d{2})$/.test(hhmm || "") ? hhmm.replace(":", "") : "";
+  return hm ? `Gate-ES-${c}-${u}-${hm}` : null;   // 无合法时间 → 无效(时间是身份的一部分)
 }
 
 /** 求某 IANA 时区在给定墙上时间处的 UTC 偏移(分钟, 东为正); 失败返回 null */
@@ -476,16 +481,16 @@ export default {
           });
         }
 
-        // 统一: uid准入 → 时区换算 → 格式/窗口校验 → 去重
+        // 统一: 格式校验 → 时区换算 → 用换算后时间生成label(时间入label) → 准入 → 窗口 → 去重
         let added = 0, rejUid = 0, rejFmt = 0, rejWin = 0, tzWarn = 0;
         for (const it of items) {
-          const label = esLabel(code, it.uid);           // 无/净化后空 uid → null
-          if (!label) { rejUid++; continue; }
           if (!it.date || !it.time || !/^\d{4}-\d{2}-\d{2}$/.test(it.date) || !/^\d{2}:\d{2}$/.test(it.time)) { rejFmt++; continue; }
           const w = toShanghaiWall(it.date, it.time, it.tz);   // → 上海墙上时间(可能跨天)
           if (w.tzWarn) tzWarn++;
+          const label = esLabel(code, it.uid, w.time);   // 时间取【换算后】墙上时间, 编入label
+          if (!label) { rejUid++; continue; }            // uid 空 → 无效
           if (!inWindow(parseDateTime(w.date, w.time).getTime())) { rejWin++; continue; }
-          if (seenDynamic.has(label)) continue;          // 按 uid(标签)去重
+          if (seenDynamic.has(label)) continue;          // 按 uid+时间(label)去重
           seenDynamic.add(label);
           dynamicOut.push({ label, time: w.time, reason: it.reason });
           added++;
