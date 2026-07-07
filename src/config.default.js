@@ -278,22 +278,30 @@ export const DEFAULT_CONFIG = {
   },
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 外部闹钟源 EXTERNAL_ALARMS —— 其它项目的时间点直接变成手机闹钟
+  // 外部闹钟源 EXTERNAL_ALARMS —— 乙方项目算好的【具体闹钟点】→ 手机闹钟
   //
-  // 你的签到/信用卡/提醒项目产出时间点,配在这里,网关拉取后并入 dynamicAlarms,
-  // 标签复用 Gate-Dynamic-Event-HHMM → 手机端搬运工零改动,自动建闹钟。
-  // 两种类型:
-  //   json: 源返回 [ { "date":"YYYY-MM-DD", "time":"HH:MM", "reason":"说明" }, ... ]
-  //         (或 { "alarms": [ ... ] } 包一层也行)
-  //   ics : 源是 iCal 订阅(如信用卡还款.ics); 全天事件用 time 字段配固定提醒时间。
-  // 拉取失败只记日志不影响主流程; enabled:false 可单独停用某源。
+  // 【定位/甲方规矩】只做"具体点搬运工": 收具体 date+time → 24h 裁剪 → 幂等对账。
+  //   不做排期/循环/业务计算(工作日、间隔、自然月去重、跳节假日…由乙方算好再喂进来)。
+  //   简单重复(每周/每月固定日)请用 iPhone 时钟 App 建重复闹钟, 不走此接口。
+  // 【准入 = 强制识别; 完整对接契约见 docs/external-alarms.md, 内部机制见 external-alarms-internal.md】
+  //   ICS : 事件【任意字段】放标签 [[ES:uid]](标题/备注/分类/X- 皆可, 括号在即准入,
+  //         内含 uid; 裸 [[ES]] 回退 VEVENT 原生 UID)。markPattern 可覆盖默认正则。
+  //   JSON: 每条必带 uid 字段。
+  //   标签 = Gate-ES-<code>-<uid>; 时区默认 Asia/Shanghai(可 Z/TZID/tz 换算); 只发未来24h。
+  // 隐私分流: 公开 URL → SOURCES(明文); 带 token/隐私 → Secret env.EXTERNAL_ALARMS(项格式同)。
+  //
+  // 源字段: { name, type:"json"|"ics", url, code, enabled,
+  //           markPattern?(ICS,覆盖识别正则), allDay?("skip"|"default"|"error",默认default),
+  //           time?(全天兜底,默认09:30), tz?(默认Asia/Shanghai), timeoutMs?(默认5000) }
   // ───────────────────────────────────────────────────────────────────────────
   EXTERNAL_ALARMS: {
     SOURCES: [
-      // { name: "签到",   type: "json", url: "https://xxx/alarms.json", enabled: true },
-      // { name: "信用卡", type: "ics",  url: "https://xxx/repay.ics", time: "09:00", enabled: true }
+      // { name: "签到",   type: "json", code: "checkin", url: "https://xxx/alarms.json", enabled: true },
+      // { name: "信用卡", type: "ics",  code: "repay",   url: "https://xxx/repay.ics",
+      //   allDay: "default", time: "09:30", enabled: true }
     ]
   },
+
 
   // ───────────────────────────────────────────────────────────────────────────
   // 日历关键字（必须用 [方括号] 包裹写在事件标题里，如 "[年假]全家出游"）
