@@ -287,7 +287,9 @@ export const DEFAULT_CONFIG = {
   //   ICS : 事件【任意字段】放标签 [[ES:uid]](标题/备注/分类/X- 皆可, 括号在即准入,
   //         内含 uid; 裸 [[ES]] 回退 VEVENT 原生 UID)。markPattern 可覆盖默认正则。
   //   JSON: 每条必带 uid 字段。
-  //   标签 = Gate-ES-<code>-<uid>; 时区默认 Asia/Shanghai(可 Z/TZID/tz 换算); 只发未来24h。
+  //   标签 = Gate-ES-<code>-<uid>-<HHMM>; 时间由【网关】拼(乙方uid不含时间)——手机端只能按名
+  //   比对、无"改闹钟时间"动作, 故时间入label: 改时间→label变→旧的对账关闭、新时间重建。
+  //   时区默认 Asia/Shanghai(可 Z/TZID/tz 换算); 只发未来24h。
   // 隐私分流: 公开 URL → SOURCES(明文); 带 token/隐私 → Secret env.EXTERNAL_ALARMS(项格式同)。
   //
   // 源字段: { name, type:"json"|"ics", url, code, enabled,
