@@ -21,28 +21,42 @@ export function parseICS(icsText) {
 
   for (const line of lines) {
     if (line.startsWith("BEGIN:VEVENT")) {
-      cur = {};
-    } else if (line.startsWith("SUMMARY:")) {
-      if (cur) cur.title = line.substring(8);
-    } else if (line.startsWith("DESCRIPTION:")) {
-      if (cur) cur.description = line.substring(12).replace(/\\n/g, "\n");
-    } else if (line.startsWith("DTSTART")) {
-      if (cur) {
+      cur = { _scan: [] };
+    } else if (!cur) {
+      continue;
+    } else {
+      // 累积本 VEVENT 所有行的"值"部分, 供外部闹钟"标记放任意字段"的识别扫描
+      const ci = line.indexOf(":");
+      if (ci > 0) cur._scan.push(line.substring(ci + 1));
+
+      if (line.startsWith("SUMMARY:")) {
+        cur.title = line.substring(8);
+      } else if (line.startsWith("UID:")) {
+        cur.uid = line.substring(4).trim();            // ICS 规范保证全局唯一, 作 uid 兜底来源
+      } else if (line.startsWith("DESCRIPTION:")) {
+        cur.description = line.substring(12).replace(/\\n/g, "\n");
+      } else if (line.startsWith("DTSTART")) {
         const dm = line.match(/(\d{4})(\d{2})(\d{2})/);
         if (dm) cur.startDate = `${dm[1]}-${dm[2]}-${dm[3]}`;
         const tm = line.match(/T(\d{2})(\d{2})/);
         if (tm) cur.startTime = `${tm[1]}:${tm[2]}`;
-      }
-    } else if (line.startsWith("DTEND")) {
-      if (cur) {
+        else cur.allDay = true;                        // 无 T = 全天事件
+        // 时区标注: TZID=... 优先; 末尾 Z 表示 UTC(过去只抠 HHMM 没管 Z → 差8小时的真 bug)
+        const tzid = line.match(/TZID=([^:;]+)/);
+        if (tzid) cur.startTZ = tzid[1];
+        else if (/T\d{2}\d{2}(\d{2})?Z/.test(line)) cur.startTZ = "Z";
+      } else if (line.startsWith("DTEND")) {
         const dm = line.match(/(\d{4})(\d{2})(\d{2})/);
         if (dm) cur.endDate = `${dm[1]}-${dm[2]}-${dm[3]}`;
         const tm = line.match(/T(\d{2})(\d{2})/);
         if (tm) cur.endTime = `${tm[1]}:${tm[2]}`;
+      } else if (line.startsWith("END:VEVENT")) {
+        if (cur.title || cur._scan.length) {
+          cur._scan = cur._scan.join("\n");            // 定型成一个可搜字符串
+          events.push(cur);
+        }
+        cur = null;
       }
-    } else if (line.startsWith("END:VEVENT")) {
-      if (cur && cur.title) events.push(cur);
-      cur = null;
     }
   }
   return events;
