@@ -46,13 +46,13 @@ ios-alarm-api/
 ├── .github/workflows/
 │   ├── deploy.yml               push main → 部署到 Cloudflare（带私有源 npm ci）
 │   └── update-core.yml          workdays-core 发版 → 自动 bump 依赖并触发部署
-├── package.json                 依赖（@OWNER/workdays-core）与脚本
+├── package.json                 依赖（@ivanphz/workdays-core）与脚本
 ├── wrangler.toml                Cloudflare Worker 部署配置
 ├── .dev.vars.example            本地密钥模板（复制为 .dev.vars 填真实值）
 └── .gitignore                   （.dev.vars 私密日历链接，绝不提交）
 ```
 
-> **占位符 `@OWNER`**：全库 6 处，部署前替换成你的 GitHub 用户名（全小写）。见 `docs/DEPLOY-CHECKLIST.md` A1。
+> **私有包作用域** `@ivanphz/workdays-core` 已在全库固化（GitHub Packages 私有包名 = 你的用户名作用域）。
 
 ---
 

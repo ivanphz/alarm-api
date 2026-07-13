@@ -1,12 +1,11 @@
 # 上线检查清单（独立可勾选）
 
 > 从零到跑通，按顺序勾。分三段：**A 网关(Cloudflare)** · **B 依赖库联动(GitHub)** · **C 手机端(本地)**。
-> 手机端细节见 `PHONE.md`。占位符 `@OWNER` = 你的 GitHub 用户名(**全小写**)。
+> 手机端细节见 `PHONE.md`。私有包作用域 `@ivanphz/workdays-core` 已固化，无需再替换。
 
 ## A. 网关部署（Cloudflare Worker）
 
-- [ ] **A1** 全库替换 `@OWNER` → 你的小写用户名（共 3 个文件 6 处：`src/index.js`×1、
-      `.github/workflows/deploy.yml`×3、`.github/workflows/update-core.yml`×2）。
+- [ ] **A1** （包作用域 `@ivanphz/workdays-core` 已全库固化，无需替换任何占位符）。
 - [ ] **A2** GitHub 仓库 Secrets（Settings → Secrets and variables → Actions）加：
       `CF_API_TOKEN`、`CF_ACCOUNT_ID`（Cloudflare 部署凭据）、`GH_PAT`（读私有包，见 INTEGRATION §2.2）。
 - [ ] **A3** Worker Secret（在 Cloudflare 侧，命令行一次）：`wrangler secret put CALENDAR_URLS`

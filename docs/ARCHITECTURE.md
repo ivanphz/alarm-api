@@ -39,7 +39,7 @@
 | `school-break.js` | 学校假期 | 寒暑春秋假区间判定（换起床铃组、跳课） |
 | `ics-parser.js` | ICS 解析 | VEVENT → {title,uid,时间,时区,全天,全字段扫描串} |
 | `time-utils.js` | 时间工具 | 上海时区日期/时钟、时刻换算 |
-| `@OWNER/workdays-core` | **外部依赖** | 节假日/工作日单一真相源（私有 npm 包，见 INTEGRATION.md） |
+| `@ivanphz/workdays-core` | **外部依赖** | 节假日/工作日单一真相源（私有 npm 包，见 INTEGRATION.md） |
 
 ---
 

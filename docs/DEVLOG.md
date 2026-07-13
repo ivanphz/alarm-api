@@ -120,7 +120,6 @@
 - **牵动**：config（WEEKEND_CLASS 结构）、rules.js（R3 从 activeLabels 改为产出 dynamicOut）、index.js（class 挪出 fixedOut）、god-mode.md 示例、手机端删旧预建 class 闹钟。sweep 已是最终形态无需再改。
 
 ### 5.2 其它
-- `@OWNER` 占位符：部署前全库替换成 GitHub 用户名（小写）。
 - 手机端待办：sweep 保持显式多前缀 `contains Gate-Dynamic-Event 或 Gate-ES 或 Gate-Class`（已加 Gate-Class）；
   DNDTick 决定 now 方案（实时+宽容差 或 刺客传入）、上线删调试探针。以 `PHONE.md` 为准。
 

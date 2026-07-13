@@ -57,7 +57,7 @@ const AUTH_DISABLED_DEFAULT = false;
  */
 
 import { CONFIG } from "./config.js";
-import { createHolidayHub } from "@OWNER/workdays-core";
+import { createHolidayHub } from "@ivanphz/workdays-core";
 import {
   getShanghaiDateString, getShanghaiClockString, addDaysToDateString, parseDateTime, formatShanghai, timeToMinutes
 } from "./time-utils.js";
