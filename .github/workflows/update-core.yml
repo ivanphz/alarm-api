@@ -1,5 +1,4 @@
 # core 发版后自动升级依赖;也可在 Actions 页手动触发(Run workflow)兜底。
-# ⚠️ 全文 @OWNER 换成你的 GitHub 用户名(小写)。
 name: Update workdays-core
 
 on:
@@ -26,10 +25,10 @@ jobs:
         with:
           node-version: 20
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@OWNER'
+          scope: '@ivanphz'
 
       - name: 升级到指定/最新版并钉死精确版本
-        run: npm install @OWNER/workdays-core@${{ github.event.inputs.version || 'latest' }} --save-exact
+        run: npm install @ivanphz/workdays-core@${{ github.event.inputs.version || 'latest' }} --save-exact
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PAT }}
 

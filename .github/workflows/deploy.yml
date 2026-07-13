@@ -1,10 +1,9 @@
 # ==============================================================================
 # GitHub Actions — 推送到 main 即部署到 Cloudflare Worker
-# ⚠️ 全文 @OWNER 换成你的 GitHub 用户名(小写)。
 #
 # 一次性 Secret(Settings → Secrets and variables → Actions):
 #   CF_API_TOKEN / CF_ACCOUNT_ID  —— Cloudflare 部署凭据(原有)
-#   GH_PAT                        —— 读取私有包 @OWNER/workdays-core(新增, 见 INTEGRATION §2.2)
+#   GH_PAT                        —— 读取私有包 @ivanphz/workdays-core(新增, 见 INTEGRATION §2.2)
 #
 # ⚠️ 家庭日历 CALENDAR_URLS 是【Worker Secret】(在 Cloudflare 那边, `wrangler secret put` 配一次),
 #    不是 GitHub Secret, 本工作流不涉及、部署也不会动它。
@@ -29,7 +28,7 @@ jobs:
         with:
           node-version: 24
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@OWNER'
+          scope: '@ivanphz'
 
       - name: 安装依赖(workdays-core 从私有源拉取)
         run: npm ci
