@@ -1,26 +1,21 @@
 # ==============================================================================
-# GitHub Actions — 推送到 main 分支即自动部署到 Cloudflare Worker
-# ==============================================================================
+# GitHub Actions — 推送到 main 即部署到 Cloudflare Worker
+# ⚠️ 全文 @OWNER 换成你的 GitHub 用户名(小写)。
 #
-# 一次性准备（在 GitHub 仓库 Settings → Secrets and variables → Actions 里加两个 Secret）:
+# 一次性 Secret(Settings → Secrets and variables → Actions):
+#   CF_API_TOKEN / CF_ACCOUNT_ID  —— Cloudflare 部署凭据(原有)
+#   GH_PAT                        —— 读取私有包 @OWNER/workdays-core(新增, 见 INTEGRATION §2.2)
 #
-#   CF_API_TOKEN   Cloudflare 后台 → My Profile → API Tokens → Create Token
-#                  → 用 "Edit Cloudflare Workers" 模板 → 生成后复制粘贴
-#   CF_ACCOUNT_ID  Cloudflare 后台任意 Worker 页面右侧 / Workers 概览页可见的 Account ID
-#
-# ⚠️ 注意: 家庭日历的 CALENDAR_URLS 是【Worker Secret】(存在 Cloudflare 那边)，
-#    不是 GitHub Secret。它只需用 `npx wrangler secret put CALENDAR_URLS` 配置一次，
-#    之后每次 Actions 部署都不会动它、会一直保留。所以本工作流不涉及它。
-#
-# 手动触发: 也可在 GitHub 仓库 Actions 页面点 "Run workflow" 手动部署（workflow_dispatch）。
+# ⚠️ 家庭日历 CALENDAR_URLS 是【Worker Secret】(在 Cloudflare 那边, `wrangler secret put` 配一次),
+#    不是 GitHub Secret, 本工作流不涉及、部署也不会动它。
 # ==============================================================================
 
 name: Deploy to Cloudflare Workers
 
 on:
   push:
-    branches: [main]        # 推到 main 就部署
-  workflow_dispatch: {}     # 允许在 GitHub 网页手动触发
+    branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -29,10 +24,17 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node(带 GitHub Packages 私有源)
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@OWNER'
+
+      - name: 安装依赖(workdays-core 从私有源拉取)
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Deploy with Wrangler
         uses: cloudflare/wrangler-action@v3
@@ -40,4 +42,4 @@ jobs:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           wranglerVersion: "4"
-          # 不写 command 时，默认执行 `wrangler deploy`，读取根目录 wrangler.toml
+          # wrangler(esbuild)会自动把 node_modules 里 import 到的包打进 bundle
