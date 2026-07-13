@@ -6,10 +6,10 @@
  * ┌──────── 规则编号速查表（trace 日志前缀与此一一对应）────────────────────────┐
  * │ R1   上帝模式: 日历事件 [上帝模式] DESCRIPTION 填 JSON，完全接管当天       │
  * │ R2   底色注入（仅法定工作日）:                                             │
- * │      R2.1 学校假期 → SchoolBreak 起床组(07:20/07:24)，废弃首日逻辑         │
- * │      R2.2 普通日   → Workday 起床组(06:25/06:29)                           │
- * │      R2.3 昨天实际休息 → 并行追加 FirstWorkday 兜底铃(07:38)               │
- * │      R2.4 午休铃 + 下班铃 + 午间 DND 两键                                  │
+ * │      R2.1 学校假期 → SchoolBreak 起床组，废弃首日逻辑                      │
+ * │      R2.2 普通日   → Workday 起床组                                        │
+ * │      R2.3 昨天实际休息 → 并行追加 FirstWorkday 兜底铃                      │
+ * │      R2.4 午休铃 + 下班铃 + 午间 DND 两键 （各铃时间见 config.FIXED_ALARMS）│
  * │ R3   周末上课（动态闹钟 Gate-Dynamic-Class）:                              │
  * │      R3.1 星期匹配注入  R3.2 长休块≥阈值跳课  R3.3 学校假期跳课            │
  * │ R4   LEAVE 碰撞（不上班: 休假/请假/年假）:                                 │
@@ -38,6 +38,14 @@ import { CONFIG } from "./config.js";
 import { timeToMinutes, addDaysToDateString, getSafeDayOfWeek } from "./time-utils.js";
 import { matchKeywordGroup } from "./rest-days.js";
 import { getSchoolBreak } from "./school-break.js";
+
+/**
+ * 取固定闹钟的参考时间(唯一存放处 = config.FIXED_ALARMS[].scheduledAt)。
+ * 日志里所有"几点"都经此动态取值,不再把时间抄成字面文本 → 改一处即处处同步。
+ * 注: 这是【展示/窗口判断】用的镜像时间; 闹钟真正响几点由手机本地那条闹钟决定。
+ */
+const ftime = (label) =>
+  (CONFIG.FIXED_ALARMS.find(a => a.label === label)?.scheduledAt) || "?";
 
 /**
  * 生成单日状态矩阵
@@ -99,24 +107,24 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     if (schoolBreak) {
       // R2.1 学校假期: 起床铃换组，首日逻辑废弃
       addFixed("Gate-Fixed-SchoolBreak-WakeUp-Vib");
-      trace.push(`  [R2.1] 🏫 ${schoolBreak.name}期间工作日: SchoolBreak 起床组 ON (07:20震动+07:24响铃)，首日并行逻辑废弃`);
+      trace.push(`  [R2.1] 🏫 ${schoolBreak.name}期间工作日: SchoolBreak 起床组 ON (${ftime("Gate-Fixed-SchoolBreak-WakeUp-Vib")}震动+${ftime("Gate-Fixed-SchoolBreak-WakeUp-Ring")}响铃)，首日并行逻辑废弃`);
     } else {
       // R2.2 普通工作日起床组
       addFixed("Gate-Fixed-Workday-WakeUp-Vib");
-      trace.push(`  [R2.2] ⏰ 工作日: Workday 起床组 ON (06:25震动+06:29响铃)`);
+      trace.push(`  [R2.2] ⏰ 工作日: Workday 起床组 ON (${ftime("Gate-Fixed-Workday-WakeUp-Vib")}震动+${ftime("Gate-Fixed-Workday-WakeUp-Ring")}响铃)`);
 
       // R2.3 节后首日并行兜底（昨天"实际"在休息，含全天请假）
       const yesterday = addDaysToDateString(dateStr, -1);
       if (rc.isEffectiveRestDay(yesterday)) {
         addFixed("Gate-Fixed-FirstWorkday-WakeUp-Ring");
-        trace.push(`  [R2.3] 🛡️ 节后首个工作日: 并行追加 FirstWorkday 兜底铃 07:38（与06:25组三重保险）`);
+        trace.push(`  [R2.3] 🛡️ 节后首个工作日: 并行追加 FirstWorkday 兜底铃 ${ftime("Gate-Fixed-FirstWorkday-WakeUp-Ring")}（与 Workday 组三重保险）`);
       }
     }
 
     // R2.4 午休 + 下班 + 午间 DND
     addFixed("Gate-Fixed-Workday-NapEnd-Vib");
     addFixed("Gate-Fixed-Workday-OffWork-Vib");
-    trace.push(`  [R2.4] 💼 午休铃13:30 + 下班铃17:28 ON，午间DND待R6.3装配`);
+    trace.push(`  [R2.4] 💼 午休铃${ftime("Gate-Fixed-Workday-NapEnd-Vib")} + 下班铃${ftime("Gate-Fixed-Workday-OffWork-Vib")} ON，午间DND待R6.3装配`);
   }
 
   // ═══ R3 周末上课（预建可开关，仅法定休息日）═══════════════════════════════

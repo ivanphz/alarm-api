@@ -67,14 +67,7 @@ export const DEFAULT_CONFIG = {
   //         CALENDAR_URLS=链接1,链接2,链接3
   //       该文件已列入 .gitignore，永远不会被 git 提交。
   // ───────────────────────────────────────────────────────────────────────────
-  API: {
-    // 中国法定节假日/调休数据 (NateScarlet/holiday-cn)，公开数据，多镜像自动降级
-    HOLIDAY_URLS: [
-      "https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master",
-      "https://fastly.jsdelivr.net/gh/NateScarlet/holiday-cn@master",
-      "https://raw.githubusercontent.com/NateScarlet/holiday-cn/master"
-    ]
-  },
+  // (节假日数据源已迁入 workdays-core 私有库, 换源=core 发 patch, 本仓库零改动。)
 
   // ───────────────────────────────────────────────────────────────────────────
   // 固定闹钟注册表（共 7 个）
@@ -82,8 +75,16 @@ export const DEFAULT_CONFIG = {
   // ⚠️ 必须提前在 iPhone「时钟」App 中手工建好这 7 个闹钟:
   //    时间、铃声、震动模式、标签(Label) 都在手机上设置，
   //    快捷指令只能按 Label 找到闹钟做 开/关，无法修改任何属性。
-  //    scheduledAt 仅作参考对照（改手机上的闹钟时间后，记得同步改这里，
-  //    否则窗口裁剪判定会错位）。
+  //
+  // 📌 关于 scheduledAt（务必看懂，否则会被它误导）:
+  //    · 闹钟【真正响几点】由手机本地那条闹钟决定 —— 这才是唯一真相源。
+  //      要改响铃时间 → 直接改手机上的闹钟即可，【改这里的 scheduledAt 不会改变手机闹钟】。
+  //    · scheduledAt 是那个时间在【代码侧的镜像】，仅用于两件事:
+  //        ① 24h 窗口布防判断(决定这条铃提前多久 ON)  ② humanReadable 面板显示。
+  //    · 这里是该时间在【整个代码里的唯一存放处】: rules.js / school-break.js 的日志
+  //      都用 ftime() 从这里动态取值，不再另存字面时间。所以你只需改这一处。
+  //    · 纪律: 在手机上改了闹钟时间，请顺手把这里的 scheduledAt 改成一样(纯为镜像忠实，
+  //      不影响开关功能)，否则窗口判定与面板显示会和现实偏离。
   //
   // 命名规范: Gate-Fixed-[场景]-[用途]-[类型]
   //   Workday      = 普通工作日        FirstWorkday = 节后第一个工作日
@@ -92,7 +93,7 @@ export const DEFAULT_CONFIG = {
   FIXED_ALARMS: [
     { label: "Gate-Fixed-Workday-WakeUp-Vib",       scheduledAt: "06:25", desc: "普通工作日起床·震动(先头)" },
     { label: "Gate-Fixed-Workday-WakeUp-Ring",      scheduledAt: "06:29", desc: "普通工作日起床·响铃(+4min兜底)" },
-    { label: "Gate-Fixed-FirstWorkday-WakeUp-Ring", scheduledAt: "07:38", desc: "节后首个工作日·额外兜底响铃(与06:25组并行)" },
+    { label: "Gate-Fixed-FirstWorkday-WakeUp-Ring", scheduledAt: "07:38", desc: "节后首个工作日·额外兜底响铃(与 Workday 起床组并行)" },
     { label: "Gate-Fixed-SchoolBreak-WakeUp-Vib",   scheduledAt: "07:20", desc: "寒暑假起床·震动(先头)" },
     { label: "Gate-Fixed-SchoolBreak-WakeUp-Ring",  scheduledAt: "07:24", desc: "寒暑假起床·响铃(+4min兜底)" },
     { label: "Gate-Fixed-Workday-NapEnd-Vib",       scheduledAt: "13:30", desc: "工作日午休结束·震动" },
@@ -329,7 +330,7 @@ export const DEFAULT_CONFIG = {
   //   "YYYY-MM-DD" = 特定年份（寒假每年不同，逐年填）
   //   单日假期: start = end 即可
   // EXCLUDE = 在假期里"挖洞"，洞里的日子不当假期（返校周/假期补课周）
-  // 作用: 工作日起床铃从 Workday 组(06:25)换成 SchoolBreak 组(07:20)，
+  // 作用: 工作日起床铃从 Workday 组换成 SchoolBreak 组(各铃时间见 FIXED_ALARMS)，
   //       并废弃 FirstWorkday 首日并行逻辑；周末上课闹钟自动跳过。
   // ───────────────────────────────────────────────────────────────────────────
   SCHOOL_BREAK: {

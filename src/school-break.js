@@ -10,7 +10,7 @@
  * 判定: 落在任一 RANGES 内 且 不落在任一 EXCLUDE 内 → 是学校假期
  *
  * 学校假期的作用（注意与 MANUAL_HOLIDAYS 的区别）:
- *   ① 工作日起床铃换组: Workday(06:25) → SchoolBreak(07:20)
+ *   ① 工作日起床铃换组: Workday 组 → SchoolBreak 组（各铃时间见 config.FIXED_ALARMS）
  *   ② 废弃 FirstWorkday 首日并行逻辑
  *   ③ 周末上课闹钟自动跳过（假期补课另有安排，手动设闹钟）
  *   它不改变"工作日"属性——大人照常上班，只是起得晚一点。
