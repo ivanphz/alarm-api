@@ -26,7 +26,8 @@
 
 ## C. 手机端（本地，落地关键）
 
-- [ ] **C1** 预建 `Gate-Fixed-*` 全部固定闹钟（7 个 + 周六/周日起床铃），
+- [ ] **C1** 预建 `Gate-Fixed-*` 全部固定闹钟（7 个固定 + 每条配了 `fixed` 锚的课一条
+      `Gate-Fixed-Class-<id>`，时间 = `periods[fixed]`，如 `Gate-Fixed-Class-sat-dance` @07:45），
       **每条在手机时钟 App 里配好时间、铃声、震动、Label**（Label 与 config.FIXED_ALARMS 逐字一致）。
 - [ ] **C2** 导入/建好快捷指令：DNDTick、ApplyFocus、ApplyFocus-CheckFocusGuard、
       ApplySilent、ApplyVolume、SyncAlarms（结构见 PHONE.md）。
@@ -40,8 +41,8 @@
 - [ ] **C7** 建时间自动化「刺客」：DND.WHITELIST 每个时刻各一条（07:40/09:30/12:15/13:29/20:55/22:25…），
       每条在**自己的计划分钟**触发、Run DNDTick 并传入该时刻（见 PHONE.md §1）。
       **设为"运行时不询问"**（否则后台不触发）。
-- [ ] **C8** 删掉手机上旧的手动预建 class 闹钟（如 `Gate-Class-Sat-Dance`），
-      未来上课闹钟走动态（当前暂缓，见 DEVLOG §5.1）。
+- [ ] **C8** 删掉手机上旧的手动预建 class 闹钟（如旧的 `Gate-Class-Sat-Dance`）——命名已变，
+      新体系是 `Gate-Fixed-Class-<id>`(预建) + `Gate-Class-<星期>-<id>-<HHMM>`(动态自动建)。
 
 ## D. 冒烟测试（上线当天验一遍）
 

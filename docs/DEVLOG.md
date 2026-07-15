@@ -86,6 +86,11 @@
 
 ---
 
+### 3.5 core 是外来代码，健康状态要一眼可见（Q2）
+- 抛错/空→降级并告警；新增**结构校验**（date 合法 + isOffDay 布尔）剔除脏条目；
+  `meta.holiday_source` = ok/degraded_error/degraded_empty/malformed，面板顶部一行醒目状态。
+- **值错（格式对但判定错）无法自动检测**——那是 core 测试套件的职责，网关信任其事实。
+
 ## 4. 架构决策（为什么是现在这个样子）
 
 ### 4.1 设备字段：命名规则 + 订阅（V11 核心）
@@ -114,10 +119,25 @@
 
 ## 5. 已定未做（欠账清单，做时直接照此施工）
 
-### 5.1 上课闹钟动态化（方案已定稿，暂缓实施）
-- **划分**：当天**第一个叫醒闹钟**留预建 `Gate-Fixed-*`（周六/周日起床铃，不容漏）；**之后的课程**下放动态 `Gate-Class-<星期>-<课程id>-<HHMM>`（稳定 id 如 `dance`，**不用序号**防重排抖动）。
-- **配置形态**：每课一条 `{day, id, name, time, breaks:{"寒假":"08:45","暑假":"08:30"}}` —— `breaks` 按 SCHOOL_BREAK 的 name 覆盖时间；**列了才在该假期响**（穿透），没列照旧跳过。
-- **牵动**：config（WEEKEND_CLASS 结构）、rules.js（R3 从 activeLabels 改为产出 dynamicOut）、index.js（class 挪出 fixedOut）、god-mode.md 示例、手机端删旧预建 class 闹钟。sweep 已是最终形态无需再改。
+### 5.1 周末上课闹钟：时段化 + 能固定就固定 ✅ 已完成（V11.2）
+- **真实矛盾**：同一节课，寒暑假与平时时间常不同；而 iOS 固定闹钟**一个 label 只能焊死一个时间**。
+  于是"叫醒级可靠(固定常驻)"与"时间随假期变(动态)"天生打架。
+- **解法**：`fixed` 指定**锚时段**，锚时段的时间 = 手机预建 `Gate-Fixed-Class-<id>` 的时间。
+  **当天时段时间 == 锚时间 → 复用固定(可靠常驻)；≠ → 自动降级动态**。逐课、逐时段自动选，两者不再打架。
+- **时段键(period key)**：抛弃"寒假/暑假"硬编码，改用 `SCHOOL_BREAK.RANGES[].key`（英文稳定标识
+  `summer`/`winter`/`spring`/`autumn`…），课表 `periods` 按 key 精确匹配；非假期 = `normal`。
+  → **加春/秋假零代码**（加个 key 的区间 + 课表配同名 key）；**没配的时段 = 不上课**；
+  **无法归类 = normal**。
+- **配置形态**：
+  `{ day, id, name, periods:{normal:"07:45", summer:"07:45", winter:"08:45"}, fixed:"normal" }`
+  → 平时/暑假(07:45==锚)走固定复用一条预建；寒假(08:45≠锚)自动动态。
+- **踩过并已铲除的坑**：曾用假期**中文名**匹配（`breaks:{"暑假":...}`），但范围名带装饰
+  （`"暑假(每年固定)"`/`"2026寒假"`）≠ 键，只好加 `includes` 子串回退——**脆弱**。
+  现用英文 `key` 精确匹配，子串 hack 已删。**教训：跨模块匹配契约必须用稳定标识，不能用展示名。**
+- **两种标签**：固定 `Gate-Fixed-Class-<id>`（Gate-Fixed 开头 → 天然不进 sweep，走开关路径）；
+  动态 `Gate-Class-<星期>-<id>-<HHMM>`（进 sweep，时间入标签→改时间关旧建新）。
+- **手机端**：每条配了 `fixed` 的课预建**一条** `Gate-Fixed-Class-<id>`（时间=锚时段时间，配好铃声）；
+  sweep 已含 `Gate-Class`。⚠️ 固定那条**时间真相在手机**，改了手机记得同步 `periods[fixed]` 镜像。
 
 ### 5.2 其它
 - 手机端待办：sweep 保持显式多前缀 `contains Gate-Dynamic-Event 或 Gate-ES 或 Gate-Class`（已加 Gate-Class）；

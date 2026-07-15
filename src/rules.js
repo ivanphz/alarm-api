@@ -127,20 +127,38 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     trace.push(`  [R2.4] 💼 午休铃${ftime("Gate-Fixed-Workday-NapEnd-Vib")} + 下班铃${ftime("Gate-Fixed-Workday-OffWork-Vib")} ON，午间DND待R6.3装配`);
   }
 
-  // ═══ R3 周末上课（预建可开关，仅法定休息日）═══════════════════════════════
+  // ═══ R3 周末上课（时段化: 能固定就固定，固定不了自动动态）═══════════════════
+  // 时段 = normal(非假期) 或 SCHOOL_BREAK 区间的 key(summer/winter/...)。
+  // periods 里没配该时段 → 不上课。时段时间 == periods[fixed](锚) → 复用预建固定闹钟(可靠常驻)；
+  // 时间不同 → 固定闹钟表达不了(一个 label 只能焊一个时间) → 自动降级动态。
   if (CONFIG.WEEKEND_CLASS.ENABLED && !isWorkday) {
+    const dayAbbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow];
+    const pKey  = schoolBreak ? schoolBreak.key  : "normal";
+    const pName = schoolBreak ? schoolBreak.name : "平时";
     for (const s of CONFIG.WEEKEND_CLASS.SCHEDULE) {
-      if (s.day !== dow) continue;
-      if (schoolBreak) {
-        // R3.3 学校假期跳课（不加入 activeLabels → 输出 OFF）
-        trace.push(`  [R3.3] 🚫 ${s.name}(${s.label}) 跳过: 处于${schoolBreak.name}（假期补课另有安排，需要时手动设闹钟）→ 发 OFF`);
-      } else if (blockLen >= CONFIG.LONG_REST_DAYS) {
-        // R3.2 长休块跳课（含全天请假拼周末的情况）
-        trace.push(`  [R3.2] 🚫 ${s.name}(${s.label}) 跳过: 连续休息块 ${blockLen} 天 ≥ 阈值 ${CONFIG.LONG_REST_DAYS}（长假默认不上课）→ 发 OFF`);
+      if (s.day !== dow) continue;                          // 只在该课的星期建
+      if (blockLen >= CONFIG.LONG_REST_DAYS) {
+        trace.push(`  [R3.2] 🚫 ${s.name} 跳过: 连续休息块 ${blockLen}天 ≥ 阈值 ${CONFIG.LONG_REST_DAYS}（长假默认不上课）`);
+        continue;
+      }
+      const t = (s.periods || {})[pKey];
+      if (!t) {
+        trace.push(`  [R3.3] 🚫 ${s.name} 跳过: 当前时段 ${pName}[${pKey}] 未在 periods 配时间（该时段不上课）`);
+        continue;
+      }
+      const anchorT = s.fixed ? (s.periods || {})[s.fixed] : null;
+      if (s.fixed && !anchorT) {
+        trace.push(`  [R3.4🚨] ${s.name}: fixed="${s.fixed}" 但 periods 无该时段时间（配置错误）→ 本次按动态处理`);
+      }
+      if (anchorT && t === anchorT) {
+        const label = `${CONFIG.CLASS_LABELS.FIXED}-${s.id}`;
+        activeLabels.add(label);
+        trace.push(`  [R3.1a] 💃 ${s.name}: 时段${pName} ${t} == 锚[${s.fixed}] ${anchorT} → 走【固定】${label}（预建常驻，可靠）`);
       } else {
-        // R3.1 正常上课: 开启预建的上课闹钟（穿透DND叫醒，DND维持09:30解除）
-        activeLabels.add(s.label);
-        trace.push(`  [R3.1] 💃 ${s.name}: 开启预建闹钟 ${s.label} @ ${s.time}（闹钟穿透DND，DND维持09:30解除）`);
+        const label = `${CONFIG.CLASS_LABELS.DYNAMIC}-${dayAbbr}-${s.id}-${t.replace(":", "")}`;
+        dynamicAlarms.push({ label, time: t, reason: `${s.name}(${pName})` });
+        const why = anchorT ? `时段${pName} ${t} ≠ 锚[${s.fixed}] ${anchorT}` : `未配 fixed`;
+        trace.push(`  [R3.1b] 💃 ${s.name}: ${why} → 走【动态】${label} @ ${t}`);
       }
     }
   }
@@ -164,14 +182,21 @@ export function generateDayMatrix(dateStr, dayEvents, rc, trace) {
     };
   };
 
-  /** 晨间碰撞的公共动作: 关固定早间组 + 关晨间时段的上课闹钟 */
+  /** 晨间碰撞的公共动作: 关固定早间组 + 清掉落在晨间的【上课闹钟】(固定/动态两种形态都清) */
   const clearMorning = () => {
     for (const lb of CONFIG.MORNING_LABELS) activeLabels.delete(lb);
-    // 上课闹钟已进 activeLabels，晨间碰撞时把落在晨间的课也关掉（如周六上午请假免上课）
+    // ① 固定形态的课(Gate-Fixed-Class-<id>): 按当天时段时间判断是否在晨间
+    const pk = schoolBreak ? schoolBreak.key : "normal";
     for (const s of CONFIG.WEEKEND_CLASS.SCHEDULE) {
-      if (timeToMinutes(s.time) <= mornEnd) activeLabels.delete(s.label);
+      const t = (s.periods || {})[pk];
+      if (t && timeToMinutes(t) <= mornEnd) activeLabels.delete(`${CONFIG.CLASS_LABELS.FIXED}-${s.id}`);
     }
-    // 注: 不再过滤 dynamicAlarms —— 事件闹钟由各自 WORK_EVENT 添加，互不清除
+    // ② 动态形态的课(Gate-Class-*): 按前缀+时间过滤。
+    //    WORK_EVENT 事件闹钟(Gate-Dynamic-Event-*)是碰撞自己的产物，不动。
+    const dyn = CONFIG.CLASS_LABELS.DYNAMIC + "-";
+    dynamicAlarms = dynamicAlarms.filter(
+      a => !(a.label.startsWith(dyn) && timeToMinutes(a.time) <= mornEnd)
+    );
   };
 
   for (const ev of dayEvents) {

@@ -12,7 +12,7 @@
  * 学校假期的作用（注意与 MANUAL_HOLIDAYS 的区别）:
  *   ① 工作日起床铃换组: Workday 组 → SchoolBreak 组（各铃时间见 config.FIXED_ALARMS）
  *   ② 废弃 FirstWorkday 首日并行逻辑
- *   ③ 周末上课闹钟自动跳过（假期补课另有安排，手动设闹钟）
+ *   ③ 周末上课: 按本假期的 key 到课表 periods 里找时间（没配 = 该假期不上课）
  *   它不改变"工作日"属性——大人照常上班，只是起得晚一点。
  *   MANUAL_HOLIDAYS 才是彻底放假（无任何工作闹钟）。
  * ==============================================================================
@@ -31,12 +31,15 @@ function inRange(dateStr, range) {
 
 /**
  * 是否处于学校假期
- * @returns {name: string} | null  命中时返回假期名（供 trace），未命中返回 null
+ * @returns {key: string, name: string} | null
+ *   key  英文稳定标识(summer/winter/spring...)，供课表 periods 精确匹配（★不要用 name 去匹配，
+ *        name 带年份/装饰会漂移；key 才是契约）。缺 key 的区间回退用 name 当 key 并在别处告警。
+ *   name 人类可读假期名（供 trace 显示）
  */
 export function getSchoolBreak(dateStr) {
   const hit = CONFIG.SCHOOL_BREAK.RANGES.find(r => inRange(dateStr, r));
   if (!hit) return null;
   const excluded = CONFIG.SCHOOL_BREAK.EXCLUDE.find(r => inRange(dateStr, r));
   if (excluded) return null;                       // 假期内挖洞: 这天不当假期
-  return { name: hit.name };
+  return { key: hit.key || hit.name, name: hit.name };
 }

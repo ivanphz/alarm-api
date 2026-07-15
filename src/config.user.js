@@ -78,8 +78,10 @@ export const USER_CONFIG = {
   //
   // ── C. 数组整段替换：要保留的也得写全 ──
   //     WEEKEND_CLASS: { SCHEDULE: [
-  //       { day: 6, time: "07:45", label: "Gate-Class-Sat-Dance", name: "舞蹈课" },
-  //       { day: 0, time: "09:00", label: "Gate-Class-Sun-Calligraphy", name: "书法课" }
+  //       { day: 6, id: "sat-dance", name: "舞蹈课",
+  //         periods: { normal: "07:45", summer: "07:45", winter: "08:45" }, fixed: "normal" },
+  //       { day: 0, id: "sun-calligraphy", name: "书法课",
+  //         periods: { normal: "09:00" } }
   //     ]}
   //   ⚠️ 只写周日那条，会把默认的周六舞蹈课【冲掉】。数组没有"追加"，只有"替换"。
   //

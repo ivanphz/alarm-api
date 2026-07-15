@@ -45,14 +45,14 @@
 }
 ```
 
-### 2.1 `fixedAlarms` —— 固定/上课闹钟的开关（⚠️ 白名单语义）
+### 2.1 `fixedAlarms` —— 固定闹钟的开关（⚠️ 白名单语义）
 
 数组，每项 `{ label, action }`：
 
 - `label` **必须**是系统已注册的可开关闹钟标签之一（`FIXED_ALARMS` 的 7 个 +
-  `WEEKEND_CLASS` 的上课闹钟）。写一个不存在的 label 无意义——手机上没有对应闹钟可开关。
+  已注册的固定闹钟）。写一个不存在的 label 无意义——手机上没有对应闹钟可开关。
 - `action`：`"ON"` 或省略 → 开；`"OFF"` → 关。
-- **关键点（白名单）**：上帝模式下，**你没列进来的固定/上课闹钟一律被关掉**。
+- **关键点（白名单）**：上帝模式下，**你没列进来的固定闹钟一律被关掉**。
   所以想让某个闹钟当天响，就必须显式列出并 `ON`。
 - 附加条件：闹钟只有在**未来 24h 窗口内**才会真正 `ON`（和平时"提前一天把闹钟开好"一致）。
 
@@ -66,8 +66,12 @@ Gate-Fixed-SchoolBreak-WakeUp-Vib    07:20  寒暑假起床·震动
 Gate-Fixed-SchoolBreak-WakeUp-Ring   07:24  寒暑假起床·响铃
 Gate-Fixed-Workday-NapEnd-Vib        13:30  午休结束·震动
 Gate-Fixed-Workday-OffWork-Vib       17:28  下班·震动
-Gate-Class-Sat-Dance                 07:45  周六舞蹈课（预建）
+Gate-Fixed-Class-<课程id>             按锚   周末上课(配了 fixed 锚的课, 如 Gate-Fixed-Class-sat-dance)
 ```
+
+> **上课闹钟有两种形态**（见 config.WEEKEND_CLASS）：
+> · 配了 `fixed` 锚且当天时段时间==锚时间 → 是**可开关固定闹钟** `Gate-Fixed-Class-<id>`，写进 `fixedAlarms`；
+> · 其余（时间≠锚 / 未配 fixed）→ 是**动态闹钟** `Gate-Class-<星期>-<id>-<HHMM>`，写进 `dynamicAlarms`。
 
 ### 2.2 `dynamicAlarms` —— 当天要存在的一次性闹钟
 
@@ -97,7 +101,7 @@ Gate-Class-Sat-Dance                 07:45  周六舞蹈课（预建）
 
 | 你写的 | 效果 |
 |---|---|
-| 省略 `fixedAlarms`（或 `[]`） | 当天**所有**固定/上课闹钟全部 **OFF**（白名单为空） |
+| 省略 `fixedAlarms`（或 `[]`） | 当天**所有**固定闹钟全部 **OFF**（白名单为空） |
 | 省略 `dynamicAlarms`（或 `[]`） | 当天不新建任何一次性闹钟 |
 | 省略 `dnd_schedule`（或 `{}`） | 当天 focus/silent 无任何开关指令（DND 全天不动） |
 | 备注是 `{}` | = 上面三者全空：**当天什么都不响、DND 不动**，最安静的一天 |

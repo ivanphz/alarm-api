@@ -247,7 +247,7 @@ flowchart TD
 
 | 族 | 谁建 | 谁定时间 | 可靠性 | 用途 |
 |---|---|---|---|---|
-| **Gate-Fixed-*** | 手机手工预建 | **手机**(代码只镜像) | **常驻**：24h 内一次同步成功即响；失败顶多多响 | 叫醒、需自定义震动/铃声 |
+| **Gate-Fixed-*** | 手机手工预建 | **手机**(代码只镜像) | **常驻**：24h 内一次同步成功即响；失败顶多多响 | 叫醒、需自定义震动/铃声、上课固定形态 `Gate-Fixed-Class-<id>` |
 | **Gate-ES-* / Gate-Class-* / Gate-Dynamic-Event-*** | 网关动态建 | 网关(时间编进 label) | **最近一次**同步须成功，否则漏响 | 外部提醒、上课、日历事件 |
 
 判据：**需自定义震动/铃声 或 绝不能漏响 → Fixed；否则动态。** 详见 ARCHITECTURE §4。
@@ -256,7 +256,7 @@ flowchart TD
 
 ## 8. 上线前手机端 To-Do（勾选）
 
-- [ ] 预建全部 `Gate-Fixed-*`（Label 逐字一致，配好铃声/震动）
+- [ ] 预建全部 `Gate-Fixed-*`（含每条配了 `fixed` 锚的课一条 `Gate-Fixed-Class-<id>`；Label 逐字一致，配好铃声/震动）
 - [ ] DNDTick：三个 Run 显式传 `$MyState`；读 `sync_alarms_flag` 比 `'yes'`；**决定 now 方案**（实时+宽容差 或 刺客传入）；上线删调试探针
 - [ ] ApplyFocus-2：Get Current Focus 在 Turn 之前；FocusDict 只赋值一次；OFF 分支两个 Turn 都是 **Off**（已确认）
 - [ ] SyncAlarms sweep 含 `Gate-Class`（已加）；建/关 label 用完整前缀

@@ -120,8 +120,10 @@
 
 ## 5. 动态闹钟命名与对账（手机端要认的）
 
-- 命名族：`Gate-Fixed-*`（预建开关，**不进** sweep）、`Gate-Class-*`/`Gate-ES-*`/
-  `Gate-Dynamic-Event-*`（动态，进 sweep）。动态族的时间都编进 label 尾巴（`...-HHMM`）。
+- 命名族：`Gate-Fixed-*`（预建开关，**不进** sweep；含 `Gate-Fixed-Class-<id>` 上课固定闹钟）、
+  `Gate-Class-*`/`Gate-ES-*`/`Gate-Dynamic-Event-*`（动态，进 sweep）。动态族时间编进 label 尾巴（`...-HHMM`）。
+- **周末上课是两种形态的混合**（V11.2）：同课在"时段时间==锚时间"的日子走固定 `Gate-Fixed-Class-<id>`
+  （可靠常驻），时间不同的日子自动降级动态 `Gate-Class-*`。详见 config.WEEKEND_CLASS 与 DEVLOG §5.1。
 - 手机端 SyncAlarms 对账两步：① 清单里有→建/开；② 手机上**动态族**里不在清单的→关。
 - **sweep 匹配条件（本地实际采用：显式多前缀 ANY）**：
   `名称 contains "Gate-Dynamic-Event" 或 "Gate-ES" 或 "Gate-Class"`。

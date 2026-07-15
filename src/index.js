@@ -36,7 +36,7 @@ const AUTH_DISABLED_DEFAULT = false;
  *
  * ── 输出契约（iPhone 快捷指令 / 安卓 Tasker 共用同一份 JSON）───────────────
  *
- *   fixedAlarms   全部"可开关闹钟"【全量】列出（7个固定 + 预建上课闹钟），
+ *   fixedAlarms   全部"可开关闹钟"【全量】列出（7个固定闹钟 + 配了 fixed 锚的上课闹钟），
  *                 每条 {label, action:"ON"/"OFF", scheduledAt, kind:"fixed"/"class"}
  *                 → 搬运工遍历: 按 label 找到手机上预建的闹钟，按 action 开/关（静默）
  *   dynamicAlarms 未来24h窗口内【期望存在并开启】的事件闹钟 [{label, time, reason}]
@@ -324,14 +324,25 @@ export default {
       //    rest-days 自动退回自然周末推演(调休失效但主流程照常出结果)。
       const years = [...new Set([yesterday, baseDate, tomorrow].map(d => +d.substring(0, 4)))];
       let holidayData = [];
+      let holidaySource = "ok";                    // ok | degraded_error | degraded_empty | malformed
       try {
         const holidayHub = await createHolidayHub(['CN'], years);
         holidayData = holidayHub.listDays('CN');   // [{date,isOffDay,name}] 与原 API days[] 同形
         holidayHub.loadLogs.forEach(l => trace.push(`[网络] 🌐 节假日: ${l}`));
       } catch (e) {
+        holidaySource = "degraded_error";
         trace.push(`[网络🚨] workdays-core 取节假日异常(${e.message})，降级为自然周末推演（调休判断将失效，主流程继续）`);
       }
-      if (holidayData.length === 0) {
+      // 结构校验: core 是外来代码/数据, 兜住"格式脏"(缺 date / isOffDay 非布尔)
+      const goodDays = holidayData.filter(d => d && /^\d{4}-\d{2}-\d{2}$/.test(d.date) && typeof d.isOffDay === "boolean");
+      const dropped = holidayData.length - goodDays.length;
+      if (dropped > 0) {
+        holidaySource = holidaySource === "ok" ? "malformed" : holidaySource;
+        trace.push(`[网络🚨] 节假日数据有 ${dropped} 条结构非法(缺date/isOffDay非布尔)，已剔除（core 可能有 bug，请核对）`);
+      }
+      holidayData = goodDays;
+      if (holidayData.length === 0 && holidaySource === "ok") {
+        holidaySource = "degraded_empty";
         trace.push(`[网络⚠️] 节假日数据为空，降级为自然周末推演（调休判断将失效！）`);
       }
 
@@ -382,10 +393,19 @@ export default {
       const windowEnd   = virtualNow + 864e5 + CONFIG.SYSTEM.WINDOW_END_BUFFER_SECONDS * 1000;
       const inWindow = (ts) => ts >= windowStart && ts <= windowEnd;
 
-      // 统一"可开关注册表" = 7个固定闹钟 + 预建上课闹钟（都靠 label 开关，需要时间做窗口裁剪）
+      // 统一"可开关注册表" = 7个固定闹钟 + 上课固定闹钟（靠 label 开关，需时间做窗口裁剪）
       const toggleRegistry = [
         ...CONFIG.FIXED_ALARMS.map(a => ({ label: a.label, scheduledAt: a.scheduledAt, kind: "fixed" })),
-        ...CONFIG.WEEKEND_CLASS.SCHEDULE.map(s => ({ label: s.label, scheduledAt: s.time, kind: "class" }))
+        // 上课【固定】闹钟(配了 fixed 锚的课): label=Gate-Fixed-Class-<id>，窗口判定用锚时段时间。
+        // 该课在"时段时间==锚时间"的日子由 R3 加进 activeLabels → 这里输出 ON；其余日子 OFF。
+        // (时段时间≠锚时间的日子，R3 改走动态 Gate-Class-*，经 dynamicOut 下发，不在此表)
+        ...CONFIG.WEEKEND_CLASS.SCHEDULE
+          .filter(s => s.fixed && (s.periods || {})[s.fixed])
+          .map(s => ({
+            label: `${CONFIG.CLASS_LABELS.FIXED}-${s.id}`,
+            scheduledAt: s.periods[s.fixed],
+            kind: "class"
+          }))
       ];
       const labelTime = new Map(toggleRegistry.map(a => [a.label, a.scheduledAt]));
 
@@ -565,8 +585,15 @@ export default {
       }
 
       // ── 6. 人类可读调试面板 ─────────────────────────────────────────────────
+      const HEALTH = {
+        ok:             "🟢 节假日源正常",
+        degraded_error: "🔴 节假日源异常(core抛错)→已降级自然周末推演，调休失效！",
+        degraded_empty: "🟠 节假日源空→已降级自然周末推演，调休失效！",
+        malformed:      "🟠 节假日源部分结构非法(已剔除)，请核对 core"
+      };
       let panel = `====================================\n`;
       panel += `⏰ Smart Schedule Gateway (V11)\n`;
+      panel += `[健康] ${HEALTH[holidaySource] || holidaySource}\n`;
       panel += `====================================\n`;
       panel += `[环境快照]: ${formatShanghai(virtualNow)}\n`;
       panel += `[窗口起点]: ${formatShanghai(windowStart)}\n`;
@@ -574,11 +601,11 @@ export default {
 
       panel += `📳 可开关闹钟指令 (按label找手机预建闹钟, 按action开/关, 静默无弹窗):\n`;
       fixedOut.forEach(a => {
-        const tag = a.kind === "class" ? "📚课" : "  固";
+        const tag = a.kind === "class" ? "课" : "固";
         panel += `  ${a.action === "ON" ? "🟢" : "⚫"} [${a.action.padEnd(3)}] ${tag} [${a.scheduledAt}] ${a.label}\n`;
       });
 
-      panel += `\n⚡ 动态事件闹钟·期望态 (搬运工对账: 名字含Gate-Dynamic-Event的,在此清单→开,不在→关;缺的→建):\n`;
+      panel += `\n⚡ 动态闹钟·期望态 (搬运工 sweep: 名字含 Gate-Dynamic-Event / Gate-ES / Gate-Class 的，在此清单→开/建，不在→关):\n`;
       if (dynamicOut.length === 0) {
         panel += `  -> ∅ (本窗口无动态事件闹钟, 手机上现有的应全部关闭)\n`;
       } else {
@@ -621,6 +648,7 @@ export default {
       return new Response(JSON.stringify({
         meta: {
           version: "V11-Decoupled",
+          holiday_source: holidaySource,
           currentTime: formatShanghai(Date.now()),
           windowLeftBound: formatShanghai(windowStart),
           windowRightBound: formatShanghai(windowEnd)
