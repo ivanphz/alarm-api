@@ -1,5 +1,5 @@
 {
-  "name": "ios-alarm-api",
+  "name": "alarm-api",
   "private": true,
   "type": "module",
   "scripts": {
