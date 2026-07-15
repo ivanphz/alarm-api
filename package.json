@@ -6,6 +6,6 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@ivanphz/workdays-core": "1.0.0"
+    "@ivanphz/workdays-core": "1.0.1"
   }
 }
