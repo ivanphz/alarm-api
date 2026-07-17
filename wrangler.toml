@@ -6,3 +6,8 @@ name = "ios-alarm-api"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 keep_vars = true
+
+# 步骤⑤ AI 额度试点需要（先在 CF 面板建命名空间再取消注释）
+# [[kv_namespaces]]
+# binding = "FACTS_KV"
+# id = "<namespace id>"
