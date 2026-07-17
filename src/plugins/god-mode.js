@@ -12,8 +12,18 @@
 import { addDays } from "../kernel/intervals.js";
 import { matchGroup, vocabularyFromConfig } from "../domain/grammar.js";
 
+// iOS 日历"智能标点"容错: 弯引号/全角冒号逗号括号 → JSON 合法字符; 剔除零宽/不换行空白
+export function normalizeSmartJson(s) {
+  return String(s)
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"').replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/\uFF1A/g, ":").replace(/\uFF0C/g, ",")
+    .replace(/\uFF5B/g, "{").replace(/\uFF5D/g, "}")
+    .replace(/\uFF3B/g, "[").replace(/\uFF3D/g, "]")
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, "").replace(/\u00A0/g, " ");
+}
+
 function parseGod(description) {
-  const god = JSON.parse(description);
+  const god = JSON.parse(normalizeSmartJson(description));
   const fixed = (god.fixed || god.fixedAlarms || [])
     .filter((a) => a && a.label && String(a.action).toUpperCase() !== "OFF")
     .map((a) => a.label);
@@ -35,17 +45,22 @@ export default {
   produce(ctx, range) {
     const vocab = vocabularyFromConfig(ctx.config);
     const byDate = new Map();
+    const notes = [];
     for (const ev of ctx.calendars || []) {
       if (!matchGroup(ev.title, "god_mode", vocab) || !ev.description) continue;
       if (byDate.has(ev.date)) continue;                     // 同日多条: 首条生效（v1 同序）
       try { byDate.set(ev.date, parseGod(ev.description)); }
-      catch { /* JSON 非法 → 该日回落常规（R1 原语义），值保持 null */ }
+      catch (e) {                                            // 非法 → 该日回落常规 + 大字报
+        notes.push({ level: "error", ref: "god_json_invalid",
+          msg: `[${ev.date}] 上帝模式 JSON 解析失败(已做智能标点容错仍非法): ` +
+               `${String(e && e.message || e)} → 该日回落常规规则` });
+      }
     }
-    const out = [];
+    const segments = [];
     const stop = addDays(range.end, 1);
     for (let d = addDays(range.start, -1); d <= stop; d = addDays(d, 1)) {
-      out.push({ from: `${d} 00:00`, value: byDate.get(d) || null });
+      segments.push({ from: `${d} 00:00`, value: byDate.get(d) || null });
     }
-    return out;
+    return { segments, notes };
   },
 };
