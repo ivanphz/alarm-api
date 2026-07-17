@@ -2,8 +2,8 @@
 // index.js — V12 双轨入口（步骤③）
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚠️ 入库前置操作（GitHub 网页一次 rename）:
-//    旧 src/index.js → src/edge/v1-legacy.js（内容零改动，V11 全逻辑冻结在内，
-//    其自带鉴权/参数/trace 原样生效）。然后本文件放到 src/index.js。
+//    旧 src/index.js → src/v1-legacy.js（⚠️同级原地改名: 其 "./config.js" 等
+//    相对导入才不会断; V11 全逻辑连自带鉴权冻结在内）。然后本文件放 src/index.js。
 //
 // 路由:
 //   /v1/*  → 冻结适配层（剥掉 /v1 前缀转交 legacy，老快捷指令零感知）
@@ -12,7 +12,7 @@
 //       false(缺省) = 走 legacy（现有手机流程不受任何影响）
 //       true        = 走 /v2/state（全部迁移后翻转，v1 择日下线）
 // ─────────────────────────────────────────────────────────────────────────────
-import legacy from "./edge/v1-legacy.js";
+import legacy from "./v1-legacy.js";
 import { handleV2, handleFact, v2Config } from "./edge/router.js";
 
 export default {
