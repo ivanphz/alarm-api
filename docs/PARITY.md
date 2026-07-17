@@ -56,7 +56,7 @@ v2:  <base>/v2/timeline?key=…&date=YYYY-MM-DD&now=00:00
 - 闹钟大面积不一致 → 取数未带 now=00:00（§1），非 bug。
 - audit 误报 ai_quota_reminder 孤儿 → 已修（豁免名单）。
 - v2 focus 07:40 缺 only_if_current 守卫 → 已修（V2_DEFAULTS 继承 v1 用户配置）。
-- 上帝模式双版解析失败 → 日历描述被 iOS 智能标点污染（弯引号），非迁移差异；
-  v2 已加容错+大字报，重拍前先确认 trace 无 god_json_invalid。
+- 上帝模式双版解析失败 → 真凶为 ics-parser 未反转义 RFC5545 的 \\, （v1 潜伏缺陷,
+  两版同错）; 已修 unescapeIcsText, 两版同愈。重拍确认 trace 无 god_json_invalid。
 - env.EXTERNAL_ALARMS 裸 URL 非法 → **v1/v2 同报**（外部闹钟两版均失效中），
   修法: CF 面板改为 `[{"name":"…","code":"…","type":"ics","url":"https://…","tz":"Asia/Shanghai"}]`。
