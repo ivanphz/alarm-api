@@ -19,8 +19,9 @@ export function auditFieldSubscriptions(fieldsConfig, schedules, trace) {
     }
   }
   // 集合类/事实类 schedule 不参与字段订阅，不算孤儿
+  // ⚠️ 新增"非字段订阅型"schedule（事实/闹钟集合/派生提醒）必须同步登记，否则误报孤儿
   const exempt = new Set(["restdays", "presence", "school_break", "god_mode",
-                          "wake_alarms", "weekend_class"]);
+                          "wake_alarms", "weekend_class", "ai_quota_reminder"]);
   for (const p of produced) {
     if (!subs[p] && !exempt.has(p)) {
       trace.push({ level: "warn", plugin: "audit", ref: "orphan_schedule",

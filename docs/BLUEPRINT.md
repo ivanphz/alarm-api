@@ -282,3 +282,11 @@ test/plugins/quiet.e2e.test.js · test/edge/router.test.js
 - **延迟实验仪表已埋**（2026-07-16）: /v2/fact 读写响应回声 colo, 存储事件附加
   received_at/colo 观测字段（契约12 容忍）。探针与被动观测流程见 PHONE-V2 §7.5。
   数据裁决 P3 底座: KV 够用 vs Durable Object。
+
+---
+
+## 对拍第一轮（周五场景）✅ 2026-07-17 裁决，累计 67 用例全绿
+
+判例入 PARITY.md §5: 闹钟差异=窗口锚点(方法, 补 now=00:00) · audit 孤儿误报(已修) ·
+focus 07:40 守卫缺失(已修, V2_DEFAULTS 继承) · EXTERNAL_ALARMS 裸 URL(用户环境, v1 同病)。
+media_volume 22:25 归零属契约15 声明差异。新增 docs/PARITY.md 对拍手册。

@@ -33,7 +33,9 @@ export const PLUGINS = [restdays, presence, quiet, schoolBreak, godMode, wakeAla
 export const V2_DEFAULTS = {
   DEFAULT: false,                       // true = 根路径默认走 v2（迁移完成后手动翻转）
   FIELDS: {
-    focus:  { KIND: "focus",  USE: "quiet", MODE: "do_not_disturb", APPLY: "on_change", OWN: {} },
+    focus:  { KIND: "focus",  USE: "quiet", MODE: "do_not_disturb", APPLY: "on_change",
+              // 继承 v1 用户配置: 早间解除仅当此刻确为勿扰（不误杀手动开的睡眠等，契约3）
+              OWN: { "07:40": { only_if_current: "do_not_disturb" } } },
     silent: { KIND: "scalar", USE: "quiet", SKIP: ["12:15", "13:29"], APPLY: "on_change", OWN: {} },
     media_volume: {
       KIND: "scalar", USE: "quiet", APPLY: "on_change",

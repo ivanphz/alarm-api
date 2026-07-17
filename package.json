@@ -7,6 +7,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@ivanphz/workdays-core": "1.0.1"
+    "@ivanphz/workdays-core": "1.0.0"
   }
 }

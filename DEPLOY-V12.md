@@ -29,7 +29,8 @@ id = "<namespace id>"
 
 ## 3. 对拍（验收关，建议 5 个典型日）
 
-对每个日期 D，取 v1 `?testDate=D` 与 v2 `/v2/timeline?date=D` 各一份，核对:
+对每个日期 D，取 v1 `?testDate=D` 与 v2 `/v2/timeline?date=D&now=00:00` 各一份
+（⚠️ 必带 now=00:00 统一窗口锚点），按 **docs/PARITY.md** 的映射与白名单核对:
 
 | 场景 | 核对点 |
 |---|---|

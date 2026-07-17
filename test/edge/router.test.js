@@ -44,6 +44,13 @@ async function call_mv(now) {
   return res.json();
 }
 
+test("对拍回归: focus 07:40 守卫继承 + reminder 不再误报孤儿", async () => {
+  const b = await call_mv("08:00");
+  assert.equal(b.fields.focus.value.only_if_current, "do_not_disturb");
+  assert.equal(b.fields.focus.value.action, "off");
+  assert.ok(!b.trace.some((x) => x.includes("orphan") && x.includes("ai_quota_reminder")));
+});
+
 test("e2e: point 模式命中 07:40 边界与对账锚点", async () => {
   const res = await handleV2(req("date=2026-07-15&now=07:42&mode=point"), {}, "/state", fakeLoaders());
   const body = await res.json();
