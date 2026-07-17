@@ -38,6 +38,28 @@ export function assembleState({
       : { ...meta, ...sampleSegment(segs, at) };             // { value, from }
   }
 
+  // point 便捷视图 current_state（v1 直观性回归）: 同一份 changes 的"时刻优先"投影。
+  // 命中容差内值变化最近的一个时刻 → 全字段值包（无变化字段 = null = 不动, v1 同义）。
+  let current_state = null;
+  if (mode === "point") {
+    const moments = new Map();
+    for (const [name, f] of Object.entries(fields)) {
+      for (const c of f.changes || []) {
+        if (!moments.has(c.at)) moments.set(c.at, {});
+        moments.get(c.at)[name] = c.value;
+      }
+    }
+    if (moments.size > 0) {
+      const ms = (t) => Date.UTC(+t.slice(0,4), +t.slice(5,7)-1, +t.slice(8,10), +t.slice(11,13), +t.slice(14,16));
+      const best = [...moments.keys()].sort((a, b) =>
+        Math.abs(ms(a) - ms(at)) - Math.abs(ms(b) - ms(at)) || (a < b ? -1 : 1))[0];
+      const bundle = {};
+      for (const name of Object.keys(fields)) bundle[name] = moments.get(best)[name] ?? null;
+      current_state = { at: best, fields: bundle,
+                        reconcile_alarms: reconcileKeys.includes(best.slice(11)) };
+    }
+  }
+
   // 对账提示
   let reconcile_alarms;
   if (mode === "point") {
@@ -60,6 +82,7 @@ export function assembleState({
     mode,
     range,
     fields,
+    ...(mode === "point" ? { current_state } : {}),
     reconcile_alarms,
     trace: renderTrace(trace),
     ...(debug ? { schedules, field_timelines: timelines } : {}),
