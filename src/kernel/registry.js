@@ -60,6 +60,13 @@ export function buildTimeline({ plugins, ctx, range }) {
     let product;
     try {
       product = p.produce({ ...ctx, schedules }, range);
+      // 诊断通道: 插件可返回 { segments, notes } —— notes 是数据, 纯度不破（契约7/9）
+      if (product && !Array.isArray(product) && Array.isArray(product.segments)) {
+        for (const n of product.notes || []) {
+          T(n.level || "warn", name, n.ref || "note", n.msg || "");
+        }
+        product = product.segments;
+      }
     } catch (e) {
       failed.add(name);
       schedules[name] = [];
