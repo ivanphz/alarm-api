@@ -13,9 +13,14 @@
  */
 
 /** 解析 ICS 文本 → 事件数组（同时提取日期与时间，供 Date Guard 使用） */
+// RFC 5545 TEXT 反转义: \\ \; \, \n \N —— 单趟替换, 避免 "\\n" 被二次还原
+export function unescapeIcsText(s) {
+  return String(s).replace(/\\([\\;,nN])/g, (_, c) => (c === "n" || c === "N") ? "\n" : c);
+}
+
 export function parseICS(icsText) {
   const events = [];
-  const unfolded = icsText.replace(/\r?\n /g, "");   // 展开 ICS 折行
+  const unfolded = icsText.replace(/\r?\n[ \t]/g, "");   // 展开 ICS 折行(空格或TAB续行)
   const lines = unfolded.split(/\r?\n/);
   let cur = null;
 
@@ -34,7 +39,7 @@ export function parseICS(icsText) {
       } else if (line.startsWith("UID:")) {
         cur.uid = line.substring(4).trim();            // ICS 规范保证全局唯一, 作 uid 兜底来源
       } else if (line.startsWith("DESCRIPTION:")) {
-        cur.description = line.substring(12).replace(/\\n/g, "\n");
+        cur.description = unescapeIcsText(line.substring(12));
       } else if (line.startsWith("DTSTART")) {
         const dm = line.match(/(\d{4})(\d{2})(\d{2})/);
         if (dm) cur.startDate = `${dm[1]}-${dm[2]}-${dm[3]}`;
