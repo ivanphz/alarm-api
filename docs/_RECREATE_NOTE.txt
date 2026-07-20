@@ -1,0 +1,5 @@
+CHANNELS.md / PROMPT-alarm-api-todo-channel.md / PROMPT-phone-synctodos.md /
+PROMPT-calendar-api-todos.md 这四份是你在对话里以文档形式提供的（非上传文件），
+本次会话磁盘无副本。请你把这四份原文直接放进 docs/（CHANNELS/两份 alarm-PROMPT
+放 docs/根；calendar-PROMPT 放 docs/_prompts-calendar-api/）。
+它们的坐标勘误见 V12-ADDENDUM.md，内容契约无需改动。
