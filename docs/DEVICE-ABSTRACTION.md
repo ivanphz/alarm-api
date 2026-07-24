@@ -1,6 +1,7 @@
 # DEVICE-ABSTRACTION.md — 设备抽象层设计（方案定稿，待实施）
 
-> **状态**: 设计定稿，**尚未实施**。实施前请通读本文 + KERNEL.md + HANDOFF.md。
+> **状态**: 设计定稿，**尚未实施** —— 这是 HANDOFF §6 路线图的 **P0 首要任务**。
+> 实施前请通读本文 + KERNEL.md + HANDOFF.md。
 > **起因**: ① 我(AI)为兼容硬加了字段级 `GUARDS`，与值内 guards 形成两个来源，不统一；
 > ② guards 的 app 值直接写了 iOS 包名(`com.apple.Maps`)，把平台细节漏进契约，安卓移植必返工。
 > **本次重构 = 为上述失误买单**，一次到位，不留二茬。
@@ -244,11 +245,11 @@ op 分支从 4 个减到 2 个。**总步骤数基本持平甚至更少。**
 ### 文档
 - [ ] KERNEL §18: 登记 `resolve`/`platform`/`GUARDS_ALWAYS`；`op` 收敛为 in/not_in；
       删除 i18n 相关旧词条
-- [ ] PHONE-V2: §1 CheckGuards 按 §5.1 重写；§4 ApplyFocus 的 i18n 路径改 resolve；
+- [ ] PHONE.md: §1 CheckGuards 按 §5.1 重写；§4 ApplyFocus 的 i18n 路径改 resolve；
       各 Apply* 传参改 resolve 节；URL 加 `&platform=ios`
-- [ ] GUARDS-AND-PARITY: guards 章节指向本文；删除"标量需 value 包装"的旧结论
+- [ ] KERNEL §5/§7: guards 位置与执行器契约按本文更新（旧的 i18n 双表段落已标注"将被本文替换"）
 - [ ] HORIZON: 多平台/多设备条目指向本文；格式嗅探等其余不变
-- [ ] INDEX / HANDOFF: 挂本文；HANDOFF 加"跨平台不变量"一条
+- [ ] HANDOFF: 已挂本文为 P0 首要任务，跨平台不变量已入 §2 第 11 条 —— 实施后更新状态即可
 
 ### 手机端（Ivan 执行，实施者只出文档）
 - [ ] CheckGuards 按 §5.1 重建（token 展开 + 两个 op 分支）

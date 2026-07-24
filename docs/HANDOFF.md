@@ -1,28 +1,31 @@
-# HANDOFF.md — 换对话接力开发的防偏移契约（todo 通道 / cadence 优先）
+# HANDOFF.md — 接力开发的防偏移契约 + 文档地图 + 路线图
 
-> **读者**: 接手 alarm-api 后续开发的新会话(可能是别的 AI)。你没有此前对话的记忆，
+> **读者**: 接手 alarm-api 后续开发的新会话（可能是别的 AI）。你没有此前对话的记忆，
 > 只有本仓库文档。**本文是你的行为契约与阅读顺序，先读完再动任何代码。**
 > 违反本文任一条 = 偏移。偏移的代价见每条括注。
+>
+> （本文合并了原 `INDEX.md` 的文档地图与路线图——一个入口，不再两处维护。）
 
 ---
 
 ## 0. 三十秒定位
 
-alarm-api 已完成 V12 插件化重构(双轨: /v1 冻结、/v2 现役，72 用例全绿)。
+alarm-api 已完成 V12 插件化重构（双轨: `/v1` 冻结、`/v2` 现役，**75 用例全绿**）。
 你接手的是**在 /v2 上新增能力**，不是改架构。三层生态:
-workdays-core(事实) → **calendar-api**(决策，另一仓库) → **alarm-api**(执行，本仓库)。
+`workdays-core`（事实）→ `calendar-api`（决策，另一仓库）→ **`alarm-api`（执行，本仓库）**。
 
 ## 1. 强制阅读顺序（跳读 = 偏移，后果: 重复已废弃的方案）
 
 ```
-1. docs/INDEX.md          ← 文档地图 + P1–P8 路线图，找到你的任务在第几步
-2. docs/KERNEL.md         ← 宪法。重点: §17.5 两类铁律、十六契约、§18 术语表(含边界双名制)
-3. docs/RULEBOOK.md       ← 改规则/加插件/加字段的配方 + 事实词汇表 + 委托模板
-4. 你的任务专属文档(见 §3)
-5. docs/BLUEPRINT.md      ← 只在需要某 schema 精确定义时查(施工史，不必通读)
+1. 本文 §2 不变量 + §4 落点速查   ← 先知道什么不能碰、东西该放哪
+2. docs/KERNEL.md                 ← 宪法。重点: §3 十五条契约、§17.5 两类铁律、
+                                     §18 术语表(含边界双名制)、§19 数据结构附录
+3. docs/RULEBOOK.md               ← 改规则/加插件/加字段的配方 + 事实词汇表 + 委托模板
+4. 你的任务专属文档（见 §3/§6）
+5. docs/DEVLOG.md §1              ← 动手机端之前必读: iOS 快捷指令的行为不符合直觉
 ```
 
-## 2. 不可违反的不变量（KERNEL 契约的浓缩，违反即架构损伤）
+## 2. 不可违反的不变量（违反即架构损伤）
 
 1. **/v1 冻结**: `src/v1-legacy.js` 及其依赖只修 bug，绝不加功能。新能力**只进 /v2**。
    (违反: 把新字段加进冻结轨道，将来 v1 下线时连累新功能)
@@ -31,91 +34,179 @@ workdays-core(事实) → **calendar-api**(决策，另一仓库) → **alarm-ap
 3. **消费者只认规则名**(契约15): 字段/下游插件只订阅 schedule 名，不碰生产者内部，
    不看其他字段的值。想"看别人的值"→ 升格为命名规则让双方订阅。
    (违反: 删一个模块炸另一个，回到 V11 耦合地狱)
-4. **token 唯一权威**: API 全小写 snake_case token; 显示名/本地化永不参与比较、不入 LA。
+4. **token 唯一权威**: API 全小写 snake_case token; 显示名/本地化永不参与比较、不入 last_applied。
    (违反: 换语言全字段重放、比较随 iOS 版本漂移)
 5. **单一 owner**(契约6): 每个 schedule 一个 owner 插件，同 owner 区间不重叠。
-6. **回传是事实非实况**(§17.5): 手机回传可作"已发生事件"进 KV，绝不作"决策依据"。
+6. **回传是事实非实况**(KERNEL §17.5): 手机回传可作"已发生事件"进 KV，绝不作"决策依据"。
    云端 diff 永远 advisory，本地是最终裁判。(违反: KV 最终一致致控制回路震荡)
-7. **Gate 标签冻结**(§12, v0.7): `GateFix-`/`GateDyn-` 两族，后段全称。演进只许加
-   `GateDyn-<新族>-`，既有格式动一字 = 全设备重录。构造唯一入口 domain/alarm-labels.js。
+7. **Gate 标签冻结**(KERNEL §12): `GateFix-`/`GateDyn-` 两族，后段全称。演进只许加
+   `GateDyn-<新族>-`，既有格式动一字 = 全设备重录。构造唯一入口 `domain/alarm-labels.js`。
 8. **网关零 iPhone 概念**: 服务端禁用 列表/urgent/alert/归档/提醒事项 等词。
-   见 §18 边界双名制: 网关 `todo` ⇄ 手机 `reminder`。
+   见 KERNEL §18 边界双名制: 网关 `todo` ⇄ 手机 `reminder`。
 9. **验收九条**: 任何改动完成，`node --test` 全绿 + 新逻辑有用例(含反例) +
-   kernel/ 目录 diff 为零。碰 kernel/ = 你选错了层，回 RULEBOOK 重选。
+   `kernel/` 目录 diff 为零。碰 `kernel/` = 你选错了层，回 RULEBOOK 重选。
 10. **大版本迁移必做能力对等清点**: 迁移(如 v2→v3)前逐条核对旧版能力文档，
-    不能只搬"当前配置用到的部分"(教训: v1→v2 曾丢 Set Focus 变量机制与守卫完整能力，
-    见 docs/GUARDS-AND-PARITY.md §2)。审计表模板在该文档。
+    不能只搬"当前配置用到的部分"。
+    **教训(真实发生过)**: v1→v2 曾丢 Set Focus 变量机制与守卫完整能力，
+    审计表见 `_archive/GUARDS-AND-PARITY.md` §2。
+11. **跨平台契约零平台字符串**: fields/guards 里永不出现包名、本地化名、平台特有词，
+    只有语义 token。平台差异由数据消化（云端 resolve 表 + 设备能力声明）。
+    详见 DEVICE-ABSTRACTION.md §7。
 
-## 2.5 ⚠️ 当前首要任务: 设备抽象层重构（docs/DEVICE-ABSTRACTION.md）
+---
+
+## 3. ⚠️ 当前首要任务: 设备抽象层重构
+
+**读 `docs/DEVICE-ABSTRACTION.md`（设计已定稿，含完整迁移清单，照做即可）。**
 
 **接手第一件事不是 todo 通道，是这个重构** —— 它为两处失误买单，且是安卓移植的前提:
 ① 曾把 iOS 包名(`com.apple.Maps`)写进 guards 契约 → 平台细节漏进契约，安卓必返工;
 ② 曾为兼容硬加字段级裸 `GUARDS`，与值内 guards 形成两个来源 → 不统一。
-**设计已定稿(DEVICE-ABSTRACTION.md)，含完整迁移清单，照做即可。核心不变量见该文 §7。**
-跨平台铁律追加(与 §2 九条同级):
-- **契约零平台字符串**: fields/guards 里永不出现包名、本地化名、平台特有词，只有语义 token。
-- **平台差异由数据消化**: 标识符差异→云端 resolve 表; 能力差异→设备能力声明; 执行机制→执行器自己的事。
-- **手机端零平台知识**: 执行器是通用解释器，加 App/语言/平台皆为云端数据变动。
 
-## 3. 两个优先任务的专属契约
-
-### 3.A todo 通道（P1）—— 读 PROMPT-alarm-api-todo-channel.md + **必配 V12-ADDENDUM.md**
-- ⚠️ 那份提示词是 **v1 坐标系**写的。**坐标翻译强制走 V12-ADDENDUM.md**:
-  `sync_todos_flag`→`reconcile_todos`; humanReadable→结构化 trace; todo条目`mode`→`landing`;
-  真相源换 KERNEL/RULEBOOK/PHONE-V2; 落点是 /v2 信封 `todos` 节(与 alarms 节并列)。
-- **术语**(HORIZON §6 三层定义): 网关侧代码/信封说 `todo`; 手机侧文档说 reminder;
-  聊天说"todo 通道"。**严禁在服务端代码出现 reminder/提醒事项字样。**
-- 落点: `edge/sources.js` 加 loadTodoSources(I/O) + `edge/assemble.js` 加 assembleTodos
-  (窗口/severity→landing 映射) + `domain/alarm-labels.js` 加 tdMarker()。**不进插件**。
-- 手机侧: 新建独立 SyncTodos 指令(PROMPT-phone-synctodos.md)，遵 PHONE-V2 铁则四条
-  (文本比较/标记判空/守卫不落账/八名封顶)。**不回插 ApplyState。**
-- 外部 todo 源: type 首选嗅探(HORIZON §5)，但首批可先要求声明 json/ics，嗅探留后。
-
-### 3.B cadence（P4）—— 读 KERNEL §10(cadence 设计) + BLUEPRINT 步骤⑤(ai_quota 范本)
-- **cadence 是通用周期任务插件; ai_quota 是它的第一个特例(已实现)，命名已归位:**
-  字段 `fields.cadence.<task>.*`、标签族 `GateDyn-CAD-*`、`cadenceLabel()`。
-- 泛化 = 把 ai-quota.js 的区间构造(冷却/周重置/纠偏事实)抽成 **kinds 库**
-  (`rolling_cooldown` | `weekly_reset` | `ladder` | …)，任务变**纯配置** `CADENCE.TASKS`。
-- 每任务声明 `channel`: `alarm`(走 GateDyn 闹钟) | `todo`(走 todos 节，需先做 3.A) |
-  `notification`(走 Bark/通知)。channel=todo 时**产物汇入 todos 节**，与自愈/calendar 并集。
-- 管理操作(重置/手动改期) = 往事实流写纠偏事件(`reset`/`set_next`)，**不加新端点**(契约14)。
-- **真嵌套字段**(`fields.cadence.<task>.available`)需改 fields 渲染核心(现是扁平字符串键
-  `"cadence.ai_claude"`)。这是 cadence 泛化的一部分，此时才做，别在别处顺手改 fields.js。
-
-## 4. 每个任务的服务端落点速查（别放错层）
-
-| 要加什么 | 放哪 | 禁止放哪 |
-|---|---|---|
-| 外部数据拉取/解析 | edge/sources.js | 插件(纯度红线) |
-| 时区换算/窗口/severity映射/标签构造 | edge/assemble.js + domain/alarm-labels.js | 插件 |
-| 新决策规则(内生的) | src/plugins/新文件 | kernel/ |
-| 新事实(内生的) | src/plugins/新文件 或 presence 扩展 | edge |
-| diff/漂移/推送 | edge/reconcile.js(新) + edge/push.js(新) | 插件 |
-| 新配置 | config.default.js(零配置值) + config.user.js(用户领地) | 硬编码进 src |
-| 信封新字段 | edge/assemble.js 组装 | kernel/ |
-
-## 5. 交付纪律（同既往）
-
-- 只交付新增/修改的**单个文件**，不打包(除非明确要整包)。
-- 每个改动配 node --test 用例(含一个反例)。
-- 改线上契约(信封/端点)必同步更新 PHONE-V2.md 与相关文档。
-- 新术语/新字段先查 KERNEL §18，查无先补表 —— 尤其过边界的词走双名制。
-- 完成后自查 §2 九条不变量 + RULEBOOK 验收九条。
-
-## 6. 疑似要改架构时（停）
-
-如果你发现任务"必须"改 kernel/、必须破契约、必须动 Gate 标签语法、必须让插件读时钟或
-让服务端存实况 —— **停下来，先问 Ivan**。90% 情况是选错了层(回 §4 重选)或误解了需求。
-真需要破契约的，是架构决策，不是实施细节，必须 Ivan 拍板并记入 KERNEL/DEVLOG。
+核心不变量见该文 §7。**§8 有四个遗留决策需 Ivan 先拍板，勿自行决定。**
 
 ---
 
-## 附: 当前状态锚点（交接时点）
-- KERNEL v0.7 / 72 用例全绿 / v2 未正式切默认(手机灰度中，ApplyState 拼装阶段)
-- 已实现: 全部决策插件 + 字段 + 闹钟 + ai_quota(cadence 特例) + i18n下发 + /v2/fact
-- **首要**: 设备抽象层重构(DEVICE-ABSTRACTION.md，设计定稿待实施，含迁移清单)
-- 方向已定稿未实施: todo通道(P1)、Bark(P2)、回传自愈(P3,FEEDBACK-SELFHEAL.md)、
-  cadence泛化(P4)、可视化/网页配置/多设备(HORIZON.md)、格式嗅探/术语清扫(HORIZON§5-6)
-- ⚠️ 现有代码含两处待重构痕迹(裸 GUARDS、router 里的 bundle id 示例)，
-  按 DEVICE-ABSTRACTION §6 迁移清单清理
-- 待你补入仓库的对话产出文档: CHANNELS.md、三份 PROMPT-*(见 docs/_RECREATE_NOTE.txt)
+## 4. 服务端落点速查（别放错层）
+
+| 要加什么 | 放哪 | 禁止放哪 |
+|---|---|---|
+| 外部数据拉取/解析 | `edge/sources.js` | 插件(纯度红线) |
+| 时区换算/窗口/severity映射/标签构造 | `edge/assemble.js` + `domain/alarm-labels.js` | 插件 |
+| 新决策规则(内生的) | `src/plugins/新文件` | `kernel/` |
+| 新事实(内生的) | `src/plugins/新文件` 或 presence 扩展 | edge |
+| diff/漂移/推送 | `edge/reconcile.js`(新) + `edge/push.js`(新) | 插件 |
+| 新配置 | `config.default.js`(零配置值) + `config.user.js`(用户领地) | 硬编码进 src |
+| 信封新字段 | `edge/assemble.js` 组装 | `kernel/` |
+
+---
+
+## 5. 文档地图
+
+**契约层**（改之前必读）
+| 文档 | 何时看 |
+|---|---|
+| **KERNEL.md** (v0.7) | 改架构前必读: 十五条契约、两类铁律(§17.5)、命名法、术语表(§18)、数据结构(§19) |
+| **RULEBOOK.md** | 想改规则/加字段/加插件: 事实词汇表 + 变更配方 + 委托 AI 模板 |
+| **PHONE.md** (v3.0) | 手机端逐动作装配: 铁则四条 + CheckGuards/ApplySilent/ApplyFocus/ApplyVolume/SyncAlarms/刺客 |
+| **CHANNELS.md** | iPhone 全部打断/提醒/触发能力总册 + 实测台账; **新"想被提醒"需求先查此表** |
+
+**接口与运维**
+| 文档 | 何时看 |
+|---|---|
+| **OPERATIONS.md** | 部署/密钥/KV/冒烟/排错 trace 速查/交付纪律 |
+| **EXTERNAL-SOURCES.md** | 外部闹钟源: §A 对接协议(可外发乙方) / §B 内部机制与排错 |
+| **GOD-MODE.md** | 上帝模式: 触发条件 + JSON 模板 + 验证 |
+
+**待建（设计已定稿，只差实施）**
+| 文档 | 状态 |
+|---|---|
+| **DEVICE-ABSTRACTION.md** | ⭐ **下一步主任务**: 语义token + resolve解析表、guards两作用域、platform自报 |
+| **TODO-CHANNEL.md** | todo 执行通道 + Bark 推送通道，服务端+手机端完整契约（已翻译到 v2 坐标） |
+| **FEEDBACK-SELFHEAL.md** | 回传 + 闹钟对账自愈，三阶段；接口形状已冻结 |
+| **HORIZON.md** | 远期方向账本: 可视化/网页配置/多设备/格式嗅探/术语清扫; 只钉形状不写码 |
+
+**历史**
+| 文档 | 何时看 |
+|---|---|
+| **DEVLOG.md** | 踩坑总账(iOS/Worker) + 决策考古 + 版本时间线。**动手机端前必读 §1** |
+| **_archive/** | 已完成的一次性文档 + v1 时代文档。有效结论已迁出，仅供考古 |
+
+---
+
+## 6. 路线图（优先级序）
+
+```
+进行中  手机端 Apply* 灰度（PHONE.md, 不受下列打扰）
+─────────────────────────────────────────────
+P0  ⭐ 设备抽象层重构（DEVICE-ABSTRACTION.md）—— 当前首要任务
+     resolve 表替代 i18n 双表 · op 收敛 in/not_in · GUARDS_ALWAYS 两作用域 · ?platform= 自报
+
+P1  todo 执行通道 → /v2 信封 todos 节 + reconcile_todos（TODO-CHANNEL.md 第一部分）
+     服务端: sources.loadTodoSources + assemble.assembleTodos + domain.tdMarker()
+     手机: 新建 SyncTodos 独立指令（不碰 Apply*）
+
+P2  Bark 推送命令通道（edge/push.js, driver 可换; god-mode/请假变更触发门铃）
+     纪律: 内容只路由、指令带 key 回拉、active 档机器门铃、回响双发
+
+P3  回传自愈（FEEDBACK-SELFHEAL.md）: 三阶段 观测→建议→自愈
+     手机回传 applied_state + alarm_inventory → edge/reconcile.js diff 期望集 → 漂移分级
+     铁律: 只"建"不"删"、固定闹钟永不自动建、回传是事实非实况、本地永远是最终裁判
+
+P4  cadence 泛化: ai_quota 升格为通用周期任务插件（rolling_cooldown/weekly_reset/ladder）
+     任务纯配置 CADENCE.TASKS; channel 可设 alarm/todo/notification
+     ⚠️ 真嵌套字段 fields.cadence.<task>.available 需改 fields 渲染核心
+        （现是扁平字符串键 "cadence.ai_claude"）。**这是 cadence 泛化的一部分，
+        此时才做，别在别处顺手改 fields.js。**
+
+P5  Pages 管理前端（读 /v2/timeline + /v2/facts, 写 /v2/fact 纠偏; 拖拽编排北极星）
+P6  lib/ics + lib/time 提包 publish（calendar-api 第二消费者）
+P7  PROFILES 多设备层（?device= 与 KV 命名空间已就绪, 配置分层）
+─────────────────────────────────────────────
+每个 P 项服务端由 AI 全包; 手机侧一律新建独立指令, 从头顺拼, 绝不回插现有 Apply*。
+```
+
+**顺序裁决（Ivan 已同意，实施会话不要抢跑）**:
+① 手机 Apply\* 灰度先跑顺（进行中，不得打扰）→ ② P0 设备抽象（服务端可先行）→
+③ P1 todo 服务端 → ④ PHONE.md 加 §SyncTodos + 手机施工 → ⑤ P2 Bark（依赖④的门铃预建物）。
+calendar-api 侧的 todo 出口是**独立轨道**，随时可做（另一仓库）。
+
+---
+
+## 7. cadence 任务的专属契约（P4 时读）
+
+读 KERNEL §10（cadence 设计）+ `src/plugins/ai-quota.js`（首个特例，当范本）。
+
+- **cadence 是通用周期任务插件；ai_quota 是它的第一个特例（已实现），命名已归位:**
+  字段 `fields.cadence.<task>`、标签族 `GateDyn-CAD-*`、`cadenceLabel()`。
+- 泛化 = 把 `ai-quota.js` 的区间构造（冷却/周重置/纠偏事实）抽成 **kinds 库**
+  (`rolling_cooldown` | `weekly_reset` | `ladder` | …)，任务变**纯配置** `CADENCE.TASKS`。
+- 每任务声明 `channel`: `alarm`（走 GateDyn 闹钟）| `todo`（走 todos 节，需先做 P1）|
+  `notification`（走 Bark/通知）。channel=todo 时**产物汇入 todos 节**，与自愈/calendar 并集。
+- 管理操作（重置/手动改期）= 往事实流写纠偏事件（`reset`/`set_next`），**不加新端点**（契约14）。
+
+---
+
+## 8. 外部依赖冗余原则（KERNEL 派生约束）
+
+Bark / workdays-core 等外部依赖一律经**适配器接口**接入，具体后端是可换 driver:
+- 推送: push 接口，Bark 是一个 driver（可换 ntfy/WebPush）
+- 节假日: 已是 workdays-core 动态 import + 降级
+
+哪天某依赖付费/关停，换 driver 不动主逻辑。**切换成本被隔离在适配器一处。**
+
+---
+
+## 9. 交付纪律
+
+- 只交付新增/修改的**单个文件**，不打包（除非明确要整包）。
+- 每个改动配 `node --test` 用例（含一个反例）。
+- 改线上契约（信封/端点）必同步更新 `PHONE.md` 与相关文档。
+- 新术语/新字段先查 KERNEL §18，查无先补表 —— 尤其过边界的词走双名制。
+- 交付含双轨（冻结+现役）的包，必须做"从入口全图解析"校验（OPERATIONS §6.6）。
+- 完成后自查 §2 不变量 + KERNEL §15 验收九条。
+
+---
+
+## 10. 疑似要改架构时（停）
+
+如果你发现任务"必须"改 `kernel/`、必须破契约、必须动 Gate 标签语法、必须让插件读时钟或
+让服务端存实况 —— **停下来，先问 Ivan**。90% 情况是选错了层（回 §4 重选）或误解了需求。
+真需要破契约的，是架构决策，不是实施细节，必须 Ivan 拍板并记入 KERNEL/DEVLOG。
+
+**同理，设计与实施分开**: 涉及结构性改动时**先出设计文档给 Ivan 确认，再写代码**
+（此前有过未经同意即改代码的教训）。
+
+---
+
+## 附: 当前状态锚点
+
+- KERNEL **v0.7** / **75 用例全绿** / v2 未正式切默认（手机灰度中）
+- **已实现**: 全部决策插件 + 字段五旋钮 + 闹钟 + 外部源 + ai_quota(cadence 特例)
+  + guards(is/is_not/in/not_in, 字段级下发) + i18n 下发 + `/v2/fact` 事实流
+- **首要**: 设备抽象层重构（DEVICE-ABSTRACTION.md，设计定稿待实施）
+- **方向已定稿未实施**: todo通道 · Bark · 回传自愈 · cadence泛化 · 可视化/网页配置/多设备
+- ⚠️ **现有代码含三处待清理痕迹**:
+  ① 字段级裸 `GUARDS`（应改名 `GUARDS_ALWAYS`，DEVICE-ABSTRACTION §3）
+  ② `router.js V2_DEFAULTS` 里 media_volume 的 bundle id 注释示例（应改语义 token）
+  ③ **`src/edge/fields.js` 是 `src/kernel/fields.js` 的完全副本且无人 import —— 死文件，可直接删**

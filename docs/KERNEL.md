@@ -1,9 +1,12 @@
-# KERNEL.md — alarm-api V12 内核契约（宪法层）
+# KERNEL.md — alarm-api 内核契约（宪法层）
 
-> 状态: **v0.6 定稿**（新增 §18 规范性术语表 + i18n 下发已实装）
-> 前版:（契约2/4 增补"释放主张清除记忆"；新增契约15 中立规则原则）
-> 前版:（2026-07-16 PHONE-FEASIBILITY 门禁 P1–P7 全部通过，A案升级为双语反查词典，B案退役未启用）。
-> 本文档是 V12 的单一真相源。修改本文档 = 修改宪法，需在 DEVLOG 记录理由。
+> 状态: **v0.7 定稿**（2026-07 冻结批次）
+> 本文档是单一真相源。修改本文档 = 修改宪法，需在 DEVLOG 记录理由。
+>
+> **v0.7 相对 v0.6 的变化**: ① 命名明确性纲领入 §2；② focus 值键 `mode`→`preset`；
+> ③ Gate 标签两族 `GateFix-`/`GateDyn-`（§12）；④ ai_quota 归位 cadence 命名空间（§10）；
+> ⑤ **补入 §17.5 两类铁律**（v0.7 已裁决但此前漏写进本文，其余文档一直在引用它）；
+> ⑥ 新增 §19 数据结构附录（原 BLUEPRINT 各步骤钉死的 schema，从施工史提升为契约）。
 
 ---
 
@@ -29,53 +32,61 @@ Apple 日历(录入) → grammar(解释) → 插件(决策) → 内核(合并/�
 
 - **schedule（命名时刻函数）**: 插件的产物。两种 kind：
   - `level`: 分段常值函数 `[{from, value}, …]`，值保持到下一段。**每一刻都有定义**。
-  - `pulse`: 点事件 `[{at, id, payload}]`。V12 仅定义类型；**首个实装场景 = notices（V13）**。
+  - `pulse`: 点事件 `[{at, id, payload}]`。当前仅定义类型；首个实装场景 = notices。
 - **区间时间**【已裁决】: `from`/`at` = `"YYYY-MM-DD HH:MM"` **上海墙钟**（全生态上海锚定，复用 toShanghaiWall）。绝对时间戳，跨午夜天然连续，LOOKBACK 退役。
 - **时间线范围**: `[昨天 00:00, 明天 24:00)` 三天滚动。
 - **字段（field）= 手机能力的抽象**: focus / silent / media_volume / alarms / notices…。闹钟只是能力之一，**执行落点从不限于闹钟**（状态变更、通知、提醒均为字段）。
 - **闹钟即状态**: `alarms` 字段 = "当前应启用的闹钟集合" S(t)，level 语义。手机对账 = diff(实际集合, S(t))；`reconcile_alarms` 仅为"何时执行昂贵对账"的调度提示。
-- **事实（fact）vs 实况**: 事实 = 领域事件，可进 KV；实况 = 手机功能实际值（当前音量、当前 Focus 名），**永不进云端**。
+- **事实（fact）vs 实况**: 事实 = 领域事件，可进 KV；实况 = 手机功能实际值（当前音量、当前 Focus 名），**永不进云端**。详见 §17.5。
 - **profile（device）**: 配置维度，非租户。
 
 ---
 
 ## 2. 命名法（宪法级，破坏性重命名一次到位）
 
+**总纲（v0.7）: 明确压倒简洁。** 一个名字宁可长三个字符，也不要在半年后需要查文档才知道它指什么。缩写是给打字省力的，不是给读代码的人省力的。
+
 - **API/JSON/token 一律 snake_case 全称，禁缩写**（历史教训: dnd）。文件名 kebab-case。
 - **枚举值 = 小写语义 token**: `on` / `off` / `do_not_disturb` / `sleep` / `work`…
 - **人类语言只允许出现在 trace.msg 与 reason 类字段**，永不出现在键名、枚举值、MAP 输出。
-- 破坏性重命名表（仅 /v2 生效）:
+- **过边界的词必须换名**（边界双名制）: 网关侧说 `todo`，手机侧说 reminder；见 §18 与 HORIZON §6。
 
-| 旧 (v1) | 新 (v2) | 说明 |
-|---|---|---|
-| schedule `dnd` | schedule **`quiet`** | dnd 只是 focus 的一种模式，原名不规范；quiet = "此刻手机该不该安静"的决策 |
-| 值 `ON`/`OFF` | `on`/`off` | 全域统一 |
-| `MODE_NAME: "Do Not Disturb"` | `mode: "do_not_disturb"` | 见契约13，Focus **名称**永不出云端 |
-| MAP 输出 `"静音"/"响铃"` 类 | 必须 token（如 `on`/`off`） | 本地化下放执行器 |
-| `sync_alarms` | `reconcile_alarms` | 语义为对账提示，非同步开关 |
-| `adAlarms`/`exAlarms` 类遗留 | （calendar-api 已清理，此处对齐） | 全称原则 |
+### 2.1 破坏性重命名表（累计，仅 /v2 生效）
+
+| 旧 | 新 | 批次 | 说明 |
+|---|---|---|---|
+| schedule `dnd` | `quiet` | v0.3 | dnd 只是 focus 的一种模式，原名不规范 |
+| 值 `ON`/`OFF` | `on`/`off` | v0.3 | 全域统一 |
+| `MODE_NAME: "Do Not Disturb"` | token 化 | v0.3 | 契约13，Focus **名称**永不出云端 |
+| MAP 输出 `"静音"/"响铃"` 类 | 必须 token | v0.3 | 本地化下放执行器 |
+| `sync_alarms` | `reconcile_alarms` | v0.3 | 语义为对账提示，非同步开关 |
+| focus 值键 `mode` | **`preset`** | **v0.7** | `mode` 撞 `?mode=` URL 参数与"模式"泛称；mode 一词全系统退役（URL 参数除外） |
+| `Gate-Fixed-` | **`GateFix-`** | **v0.7** | 见 §12 |
+| `Gate-Dynamic-` / `Gate-ES-` / `Gate-Class-` / `Gate-AIQ-` | **`GateDyn-` 单一动态族** | **v0.7** | 见 §12 |
+| 字段 `ai_available` | **`cadence.ai_claude`** | **v0.7** | ai_quota 归位 cadence 命名空间，见 §10 |
+| todo 条目 `mode` | **`landing`** | v0.7 | 同样撞 mode；见 §18 |
 
 ---
 
 ## 3. 十五条契约
 
+> ⚠️ **勘误（本次整理）**: INDEX/HANDOFF 旧版称"十六契约"，系笔误。历史上从未存在第 16 条；
+> 逐条核对 v0.4/v0.5/v0.6/v0.7 增补记录，契约总数恒为 **15**。相关引用已全部更正。
+
 1. **字段消费零依赖**。依赖只存在于生产 DAG（插件 deps），构建时解算完毕。
 2. **null = 无主张**。永不表示"迟到了"。状态可迟到采样、漏采样，系统收敛。规则可显式产出 null 边界=**释放主张**（如长假白天）：既让手动状态自由存活，又使随后的重新主张（null→值）成为真变化——周期性重进（长假夜夜进安静）由此实现，无需 enforce。
-3. **守卫附着于区间**，执行时评估。区间值可携带 `only_if_current`（值为 **token**），不满足则跳过本次、下个采样点再议。手动覆盖天然赢到下一边界。
+3. **守卫附着于区间**，执行时评估。区间值可携带守卫（值为 **token**），不满足则跳过本次、下个采样点再议。手动覆盖天然赢到下一边界。
 4. **执行器必缓存 last_applied**。期望值没变，就不动手。所有字段的默认防线。**期望为 null 时删除 last_applied[字段]**——无主张=放下记忆，否则释放期后的重新主张会被旧缓存误判为"没变"。
 5. **字段声明 apply 策略**【已裁决】: 默认 `on_change`；`enforce` 仅显式声明（当前**无字段**声明 enforce，media_volume 亦为 on_change）。加强守卫依赖读取能力，读不到只降级加强守卫。
 6. **单一 owner**。每张 schedule 有且只有一个 owner 插件；跨插件影响走 deps。同插件区间重叠 = producer bug，拒收 + trace。
 7. **纯度红线**。`produce(ctx, range)` 禁读时钟、禁 I/O；"now" 只在采样端。时间线 = `(inputs, config)` 纯函数 → golden 冻结、`?date=` 预览、按输入哈希缓存。
 8. **三层叠加**: 插件 base → god-mode overlay → 字段 OWN。归一化：相邻同值合并；对象相等 = 规范序列化（CRC32 习惯）。
 9. **fail 语义**。插件抛错 → 该 schedule 无主张 + trace 大字报；deps required/optional。fail-closed = **宁可不动手机，不可胡动**；保命项靠手机预建固定闹钟兜底。
-10. **云端存事实，不存实况**。
+10. **云端存事实，不存实况**（展开见 §17.5）。
 11. **device 第一天生效**: 采样/事实 API 带 `?device=`；KV 命名空间 `fact:<device>:<stream>`；per-device 数据不进他人 ctx 与 trace。
 12. **版本信封**: `{version, generated_at, range, fields, trace}`，双向未知字段容忍。
-13. **语义 token 红线（本地化下放执行器）**: 云端 API **永不说手机 UI 语言**。Focus 显示名随系统语言变化（"Do Not Disturb"⇄"勿扰模式"）且可被用户自定义——属于**实况**。云端只输出 token；执行器持一张**双语反查词典 `本机名 → token`**（中英文条目一次性预载，实测表见 §7，冻结为执行器常量）。`Get Current Focus` 文本先反查成 token 再与 `only_if_current` 比对；空文本 = token `none`（"仅当无专注"守卫免费获得）。**换系统语言零改动**；新增自定义 Focus = 加一行（自定义名不随语言变）。快捷指令无原生"获取系统语言"动作，反查词典使检测本身成为多余。
+13. **语义 token 红线（本地化下放执行器）**: 云端 API **永不说手机 UI 语言**。Focus 显示名随系统语言变化（"Do Not Disturb"⇄"勿扰模式"）且可被用户自定义——属于**实况**。云端只输出 token；执行器持一张本地名映射表（当前实现见 §7）。**换系统语言零改动**；新增自定义 Focus = 加一行数据。
 14. **管理操作 = 纠偏事实**: 一切"重置/手动改时间/补记"不是新接口，而是往事实流写一条纠偏事件（`{type: reset|set_next|done, at, id}`）。纯度不破，审计轨迹免费，管理界面因此只是"事实控制台 + 时间线视图"这样一个纯客户端。
-
----
-
 15. **中立规则原则（插件独立铁律）**: 消费者（字段或下游插件）只认**规则名**，不认生产者，更不认其他消费者；规则不属于任何消费者。silent 与 focus 共同订阅 quiet 是"声明决策同源"，不是依附——删除任何一方，另一方零感知；删除 quiet，双方各自安全落地为无主张。想"看一眼别的字段/插件现在的值" = 违宪信号，正确动作永远是把想看的东西升格为一张命名规则，让双方订阅。边界时刻相同，语义同源→USE 共享（改一处全跟），数字巧合→各自 OWN（互不牵连）；用巧合数字冒充共用是配置腐败。
 
 ## 4. 插件契约
@@ -97,6 +108,8 @@ export default {
 };
 ```
 
+`produce` 亦可返回 `{ segments, notes }`：notes 转 trace（诊断通道，纯度不破）。
+
 内核职责（且仅此）：注册表加载 → deps 拓扑排序 → 校验（重叠/owner/悬空/孤儿）→ 归一化 → 发布 → 采样 → trace → 信封。
 
 ## 5. 字段订阅五旋钮 与 v2 字段清单
@@ -104,57 +117,64 @@ export default {
 ```
 FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
 ```
+（另有字段级 `GUARDS`，作用于整个字段——重构后改名 `GUARDS_ALWAYS`，见 DEVICE-ABSTRACTION §3。）
 
 | 字段 | KIND | 说明 |
 |---|---|---|
-| `focus` | focus 对象 | `{mode:token, action:on/off, switch_to, only_if_current:token}` |
+| `focus` | focus 对象 | `{preset:token, action:on/off, switch_to}`；守卫下发在**字段级** `fields.focus.guards` |
 | `silent` | scalar | `on`/`off` |
 | `media_volume` | scalar | **整数 0–100**（手机读数为 0–1 浮点，执行器 ×100 取整后比较/设置）|
+| `cadence.<task>` | scalar | 周期任务可用性（当前 `cadence.ai_claude`，见 §10） |
 | `alarms` | 集合(level) | 期望 Gate 集合，执行器 diff 对账 |
-| `notices` | pulse | V13 实装（cadence 通知通道） |
+| `notices` | pulse | 未实装（cadence 通知通道） |
 | `reconcile_alarms` | hint | 对账调度提示 |
+
+**守卫位置铁律**: `only_if_current` 是单守卫语法糖，服务端翻译成 guards 条目并从 value 移除；
+**所有字段的 guards 一律下发在字段级** `fields.<x>.guards`，手机端三字段读法完全一致。
+（历史 bug: 曾把 focus 的 guards 塞在 `value.guards` 内，与标量字段不一致 → focus 守卫永久失效。）
 
 ## 6. 采样端
 
 - point/segment 是同一份区间数据的两种问法，`?mode=` 决定；**插件不声明采样模式**。
 - segment = 二分找最后一个 `from ≤ now`；point = 容差窗口内的值变化边界。
-- point 容差【已裁决】: **过去3分 / 未来3分**（采样器参数，沿用）。
+- point 模式另附 `current_state` "时刻优先"投影（命中时刻 + 全字段值包 + 对账标志，null=装死），供边界刺客直接消费；`changes` 保留为明细。
+- point 容差【已裁决】: **过去3分 / 未来3分**（采样器参数）。
 - `?device=` 必带；`?date=` 任意日期预览。
 
-## 7. 执行器契约（PHONE.md 对接）
+## 7. 执行器契约（与 PHONE.md 对接）
 
 1. 采样 → 各字段期望 token。
-2. **反查词典**（契约13，仅 focus 类需要）: `Get Current Focus` 文本 → token。冻结表（2026-07-16 实测）:
-
-| en | zh | token |
-|---|---|---|
-| Do Not Disturb | 勿扰模式 | do_not_disturb |
-| Sleep | 睡眠 | sleep |
-| Personal | 个人 | personal |
-| Work | 工作 | work |
-| Driving | 驾驶 | driving |
-| Reduce Interruptions | 减少干扰 | reduce_interruptions |
-| (空) | (空) | none |
-3. `期望 == last_applied[field]` → 跳过（on_change）。
-4. `only_if_current` 且可读 → 执行时评估。
+2. **本地名映射**（契约13，仅 focus 类需要）: 请求带 `?locales=<系统语言>,en`，信封下发 `i18n` 两张表——
+   `focus_name_to_token`（守卫段: Get Current Focus 文本 → token）与
+   `focus_token_to_name`（执行段: token → **本机名候选数组**，逐个试开验证，成功即止）。
+   种子表（2026-07-16 实测冻结）在 `src/edge/i18n.js`，含 en/zh/ja/ko：
+   `do_not_disturb` / `sleep` / `personal` / `work` / `driving` / `reduce_interruptions`；空文本 = `none`。
+   > ⚠️ **本节将被 DEVICE-ABSTRACTION 重构替换**: 反查表 `focus_name_to_token` 删除、
+   > `focus_token_to_name` 并入 `resolve.focus_preset`、守卫改成员判断。实施前以本节为准，
+   > 实施后以 DEVICE-ABSTRACTION §2 为准。
+3. `期望 == last_applied[field]` → 跳过（on_change）。**focus 的 last_applied 存签名 `preset|action`**，
+   否则跨 preset 同 action 切换（勿扰on→睡眠on）会被判"没变"而永不生效。
+4. 守卫可读 → 执行时评估；守卫拦截 = 跳过且**不落账**（enforce 压不过守卫）。
 5. 动手成功 → 更新 last_applied。
 6. alarms: diff 对账，`reconcile_alarms` 提示时全量。
 
 ## 8. 路由与迁移【已裁决】
 
-- `/v1/*`: 旧逻辑**冻结**（薄适配层包住现 index.js 流程，只修 bug 不进化）。
+- `/v1/*`: 旧逻辑**冻结**（薄适配层包住 v1-legacy.js 流程，只修 bug 不进化）。
 - `/v2/*`: 新内核（本契约全部生效，含破坏性命名）。
-- 默认路径指向由 config 开关**手动控制**；全部迁移后默认切 v2，v1 择日下线。
+- 默认路径指向由 config 开关 `V2.DEFAULT` **手动控制**；全部迁移后默认切 v2，v1 择日下线。
 
 ## 9. 事实端点
 
-- `POST /fact` body `{stream, at, id, type?, payload?}`；`id` 幂等去重。
-- KV: `fact:<device>:<stream>`。纠偏事件（契约14）走同一端点。
-- 内核抓事实流注入 `ctx.facts`；缓存键含事实哈希。
+- `POST /v2/fact` body `{stream, at, id, type?, payload?}`；`id` 幂等去重；`type ∈ done|reset|set_next`。
+- `GET /v2/facts?stream=` 调试列取。KV: `fact:<device>:<stream>`，每流保留最近 200 条。
+- 服务端附加观测字段 `received_at` / `colo`（契约12 容忍；延迟实验与漂移观测共用）。
+- KV 未绑定 → 明确返回 `facts_storage_missing`，不静默。
+- 内核抓事实流注入 `ctx.facts = { streams, degraded }`；读失败/未绑定进 degraded，插件对降级流输出 null（**宁可不知道，不可编造**）。
 
-## 10. cadence（周期任务超级插件，V13 主菜）
+## 10. cadence（周期任务超级插件）
 
-**裁决方向: 融入本框架，做成一个通用插件 + 任务纯配置；不另起系统**（另起 = 重复造 facts/采样/手机契约三件套）。ai_quota 不再是独立插件，而是 cadence 的第一个任务（步骤⑤先做特例试点，V13 泛化收编）。
+**裁决方向: 融入本框架，做成一个通用插件 + 任务纯配置；不另起系统**（另起 = 重复造 facts/采样/手机契约三件套）。ai_quota 是 cadence 的第一个任务（已实现为特例，泛化待做）。
 
 ```js
 CADENCE.TASKS = {
@@ -166,24 +186,34 @@ CADENCE.TASKS = {
 
 - `kind` 开放枚举: `rolling_cooldown | weekly_reset | ladder | …`（新玩法 = 新 kind 实现，仍在插件层）。
 - 任务状态 = 该任务的事实流（`done/reset/set_next` 事件），点错了就写纠偏事实（契约14）。
-- `channel` = 输出路由到哪个手机能力字段: `alarm`（可靠，不依赖轮询即响铃，但污染闹钟列表、需对账）| `notification`（轻，仅执行器采样/自动化触发时可见）| `reminder`（占坑 token，未来接 iOS 提醒事项）。可靠性要求决定通道选择，权在任务配置。
-- 每任务同时产出一个 level 字段（如 `ai_available: true/false`）供任何消费者查询。
-- **管理界面** = Cloudflare Pages 纯前端（读 `/timeline` + 写 `/fact`），复用 otc-rate-suite 的 Pages+Worker 套路；对内核零侵入。
+- `channel` = 输出路由到哪个手机能力字段: `alarm`（可靠，不依赖轮询即响铃，但污染闹钟列表、需对账）| `notification`（轻）| `todo`（走 todos 节，需先做 todo 通道）。可靠性要求决定通道选择，权在任务配置。
+- 每任务同时产出一个 level 字段 `fields.cadence.<task>` 供任何消费者查询。
+- 提醒闹钟标签族 `GateDyn-CAD-<task>-<HHMM>`（构造函数 `cadenceLabel()`）。
+- **当前实现状态**: `plugins/ai-quota.js`（冷却区间）+ `plugins/ai-quota-reminder.js`（纯派生，
+  只读 ai_quota 时间线的 false→true 跳变产提醒）。泛化 = 把冷却构造抽成 kinds 库、任务变纯配置。
+- **真嵌套字段**（`fields.cadence.<task>.available`）需改 fields 渲染核心（现为扁平字符串键
+  `"cadence.ai_claude"`）。这是 cadence 泛化的一部分，届时才做。
 
-## 11. 文件去向表（含最终目录【已裁决】）
+## 11. 文件布局【已裁决】
 
 ```
 src/
   kernel/    intervals.js  fields.js  audit.js  registry.js
   plugins/   quiet.js  presence.js  wake-alarms.js  weekend-class.js
-             god-mode.js  restdays.js  school-break.js  cadence.js(V13)
-  edge/      router.js  auth.js  sources.js  assemble.js
+             god-mode.js  restdays.js  school-break.js
+             ai-quota.js  ai-quota-reminder.js  cadence.js(待泛化)
+  edge/      router.js  sources.js  assemble.js  i18n.js
   domain/    alarm-labels.js  grammar.js
   lib/       time.js  ics.js          ← 包形，稳定后 publish（calendar-api 是第二消费者）
   config.default.js  config.user.js  config.js（合并序: default → user → PROFILES.<device>）
+  v1-legacy.js + rules.js + rest-days.js + device-state.js + school-break.js  ← /v1 冻结路径
 ```
 
-| 现文件 | 去向 |
+> ⚠️ **v1 冻结路径的五个文件必须留在 src/ 根且文件名精确**，否则 Cloudflare 构建期
+> （解析全部 import）失败，报 `Could not resolve ./v1-legacy.js`。单测不会暴露此问题
+> ——用例只 import v2 的 router/plugins，永不触及 legacy 分支。交付纪律见 OPERATIONS §5。
+
+| v1 文件 | v2 去向 |
 |---|---|
 | device-state.js | kernel/intervals.js（**零依赖不 import CONFIG**）+ kernel/fields.js + kernel/audit.js |
 | rules.js R1 | plugins/god-mode.js（overlay） |
@@ -191,14 +221,32 @@ src/
 | rules.js R6 | plugins/quiet.js |
 | rules.js R2 / R3 | plugins/wake-alarms.js / weekend-class.js |
 | rest-days.js / school-break.js | plugins/restdays.js / school-break.js（shared） |
-| ics-parser.js + toShanghaiWall 等 | lib/ics.js + lib/time.js |
+| ics-parser.js + toShanghaiWall 等 | lib/ics.js + lib/time.js（ics-parser 仍双轨共用） |
 | 标题词法 | domain/grammar.js（解析失败 = 无主张 + trace） |
 | index.js esLabel | domain/alarm-labels.js |
 | index.js 其余 | edge/*（v1 冻结适配层亦挂此处） |
 
 ## 12. Gate 标签契约（冻结）
 
-既有格式（Gate-Fixed-*、Gate-Dynamic-*、Gate-ES-<code>-<uid>-<HHMM>）**冻结**；演进只许新增前缀族（如 Gate-AIQ-*）；构造唯一入口 domain/alarm-labels.js。标签是手机预建闹钟的焊死契约，改语法 = 全家设备重录。
+**两族，后段全称**（v0.7 冻结批次）:
+
+| 族 | 前缀 | 用途 | 手机端 |
+|---|---|---|---|
+| 固定 | `GateFix-` | 手工预建、含自定义铃震、绝不能漏响 | 只开/关，**网关从不碰时间** |
+| 动态 | `GateDyn-` | 网关按需建删，默认铃 | 前缀 sweep：在清单→开/建，不在→关 |
+
+现役子族：`GateFix-<用途>` · `GateFix-Class-<id>` · `GateDyn-Event-<HHMM>` ·
+`GateDyn-ES-<code>-<uid>-<HHMM>`（外部源）· `GateDyn-Class-<星期>-<id>-<HHMM>` ·
+`GateDyn-CAD-<task>-<HHMM>`（cadence）。
+
+**冻结含义**: 标签焊死在每台手机手工预建的闹钟里，改语法 = 全家设备重录。
+演进只许**新增** `GateDyn-<新族>-`；既有格式动一字即破坏性变更。
+**构造唯一入口 `domain/alarm-labels.js`**，代码任何其它位置不得拼标签字符串。
+
+**时间为何必须进动态标签**（血泪教训，勿删）: iOS 快捷指令**没有"改现有闹钟时间"的动作**，
+`Find Alarms where 名称 is <label>` 找到同名旧闹钟只能 Turn On，时间永不更新（静默失效）。
+把时间编进 label → 改时间 = label 变 → 旧的被 sweep 关掉、新时间重建。**时间由网关拼**
+（时区换算后的墙上时间），外部源 uid 永不含时间，正确性开关收在网关手里。
 
 ## 13. trace 结构化
 
@@ -206,7 +254,8 @@ src/
 
 ## 14. 预留与不留
 
-留: `?device=`、`/ack` 占坑、`ctx.sources` 开放数组（TeslaMate/MQTT）、`/audit` `/timeline` 一等端点、pulse 类型、`reminder` 通道 token。
+留: `?device=`、`?platform=`（DEVICE-ABSTRACTION）、`ctx.sources` 开放数组（TeslaMate/MQTT）、
+`/audit` `/timeline` 一等端点、pulse 类型、`todo` 通道 token、信封 `drift` 节（FEEDBACK-SELFHEAL）。
 **不留**: 插件热加载、跨插件事件总线、多租户、实况回传同步。
 **北极星（记录在案，不设计）**: 拖拽编排面向大众 = "配置生成器 + 事实控制台"纯前端，声明式架构已天然容纳；真正门槛在手机侧手工装配（快捷指令+预建闹钟）与多租户，维持不做。
 
@@ -217,30 +266,66 @@ src/
 | 1 | 新 scalar 字段 | 纯 config |
 | 2 | 新 focus 类字段 | 纯 config |
 | 3 | 新命名规则 | 新插件文件 |
-| 4 | 新事实流 | POST /fact + 插件 |
+| 4 | 新事实流 | POST /v2/fact + 插件 |
 | 5 | 新设备 | PROFILES 一节 + 手机字典 |
 | 6 | 新闹钟族 | 标签前缀 + 插件 |
 | 7 | 新输入源 | ctx.sources 数组 |
 | 8 | 新输出形态/通道 | pulse/channel token |
-| 9 | 新周期任务 | CADENCE.TASKS 一节纯配置（V13） |
+| 9 | 新周期任务 | CADENCE.TASKS 一节纯配置 |
 
 ## 16. 测试纪律
 
-node --test + 固定夹具（facts/日历/config），CI 即唯一"本地"；时间线纯函数 → golden 冻结对比；kernel/intervals.js 必须先有测试后有消费者。
+node --test + 固定夹具（facts/日历/config），CI 即唯一"本地"；时间线纯函数 → golden 冻结对比；
+kernel/intervals.js 必须先有测试后有消费者。
+**交付含双轨（冻结+现役）的包，必须做"从入口全图解析"校验**——单测可能永不触及冻结路径的 import。
 
 ## 17. 开工序
 
 ```
-⓪ PHONE-FEASIBILITY 门禁                                   ← ✅ 全过（2026-07-16）
-① kernel/intervals.js（零依赖）+ 测试                      ← ✅ 14 用例全绿
-② plugins/presence.js + plugins/quiet.js + 双模采样器      ← 三件套 = 契约验证
-③ edge: /v2/state 接 PHONE 契约（v1 冻结适配层并行挂载）
-④ 其余插件搬家（wake-alarms / weekend-class / god-mode / restdays / school-break）
-⑤ /fact + ai_claude 任务（cadence 特例试点，验证 facts/闹钟即状态/纠偏事实）
-⑥ V13: cadence 泛化 + notices(pulse 实装) + Pages 管理前端
-⑦ lib/ics + lib/time 提包 publish
+⓪ 执行器可行性门禁                                        ← ✅ 全过（2026-07-16）
+① kernel/intervals.js（零依赖）+ 测试                      ← ✅
+② plugins/presence.js + plugins/quiet.js + 双模采样器      ← ✅ 三件套 = 契约验证
+③ edge: /v2/state 接执行器契约（v1 冻结适配层并行挂载）     ← ✅
+④ 其余插件搬家（wake-alarms / weekend-class / god-mode / restdays / school-break）← ✅
+⑤ /v2/fact + ai_claude 任务（cadence 特例试点）            ← ✅
+⑥ 设备抽象层重构（DEVICE-ABSTRACTION.md）                  ← ⬅ 当前首要任务
+⑦ todo 通道 → Bark → 回传自愈 → cadence 泛化              ← 路线图见 HANDOFF §7
+⑧ lib/ics + lib/time 提包 publish
 ```
 
+## 17.5 两类铁律（政策 vs 不变量）
+
+> **本节 v0.7 已裁决但此前漏写进本文**（BLUEPRINT v0.7 条目、HANDOFF §2.6、
+> FEEDBACK-SELFHEAL 开篇均在引用它）。本次整理据上述三处补全。
+
+系统里的规矩分两类，**混为一谈是架构腐坏的主因**：
+
+| | **政策（policy）** | **不变量（invariant）** |
+|---|---|---|
+| 定义 | 当下选择这么做，换个想法就能改 | 违反了系统就不成立 |
+| 例 | 07:40 解除安静；长假阈值 3 天；media_volume 归零 | 插件纯函数；单一 owner；云端不存实况 |
+| 落点 | **config / 插件文件** | **kernel/ + 本文契约** |
+| 改动成本 | 改一行，随时 | 改 = 修宪，需 Ivan 拍板 + DEVLOG 记录 |
+| 判据 | "我明天想改回来会怎样？" → 没事 | → 别处会静默塌掉 |
+
+**纪律**: 新规矩落地前先归类。政策绝不硬编码进 kernel/；不变量绝不藏在 config 里当"默认值"
+（那等于把承重柱做成可拆的）。**看到某条规矩需要在两个地方同时改才生效，说明它归错类了。**
+
+### 17.5.1 回传是事实，不是实况（本节最常被引用的一条）
+
+手机回传的数据**只能作为"已发生的事件"进云端，绝不能作为"当前状态"参与决策**：
+
+- ✅ **可进 KV**: "07:40 我把 silent 设成了 on，成功" —— 这是一条已完成的领域事件，
+  时间戳固定、不会过期、审计价值高。
+- ❌ **绝不进决策**: "手机现在是静音状态" —— 这是实况。KV 最终一致 + 网络延迟意味着
+  云端看到的实况永远是过去时；拿它做决策会让控制回路震荡（云说该改→手机改→回传→云再判…）。
+
+推论（三条，FEEDBACK-SELFHEAL 全文建立在此之上）：
+1. **云端 diff 永远是 advisory（观点）**，本地 `last_applied` / 手机实际态永远是最终真相。
+2. **云不可用 = 安全退回现状**（照旧本地对账），绝不因为云端说"该改"就盲改。
+3. **守卫必须在执行时读本地实况**，云端不得代为判断。
+
+---
 
 ## 18. 规范性术语表（防语义漂移的疫苗；新键名/新值先查表，查无先补表）
 
@@ -250,9 +335,14 @@ node --test + 固定夹具（facts/日历/config），CI 即唯一"本地"；时
 | `on` / `off` | 该字段能力的期望开/关状态（level 值, 非事件） | 当作"执行一次动作" |
 | `null`（规则值） | 无主张三义: 缺失事实/字段压制/显式释放; 执行器: 不动手+LA写哨兵 | 表示"迟到""错误""0" |
 | `none`（哨兵） | **仅存在于执行器 LA**, 表示"无有效记忆/无专注"; 永不出现在信封 | 写进云端任何字段 |
+| `preset`（focus 值内） | 目标专注模式的 token（`do_not_disturb`/`sleep`…）。**v0.7 前叫 mode** | 写本机显示名 |
 | `action`（focus 值内） | 期望的开关目标态 on/off | 一次性动作 |
 | `action`（alarms.fixed 内） | 该预建闹钟的期望开关状态（对账目标） | 事件/触发指令 |
-| `switch_to` | 保留: action 生效后应切换到的目标 mode token; v2 执行器未实装, 非 null 时执行器可忽略但不得报错 | 自行发明语义 |
+| `switch_to` | 保留: action 生效后应切换到的目标 preset token; 执行器未实装, 非 null 时可忽略但不得报错 | 自行发明语义 |
+| `guards` | 字段级守卫数组, 全满足才执行; 拦截=跳过且不落账 | 放进 value 内部 |
+| `source`（guard 内） | 实况来源 token: `current_focus` / `app` / `locked`（未来 charging/wifi/battery） | 平台特有字符串 |
+| `op`（guard 内） | `is` / `is_not` / `in` / `not_in`（未来 gt/lt）; in/not_in 的 value 必须数组 | contains 做集合判断 |
+| `only_if_current` | **输入侧语法糖**, 服务端翻译成 guards 条目并从 value 移除 | 手机端去读它 |
 | `from` | level 段的起始时刻, 采样归因("值来自哪个边界") | 事件发生时刻 |
 | `at` | 点事件/变化边界/事实发生的时刻 | 段起点 |
 | `generated_at` | 本次采样的"now"（信封时间戳） | 数据新鲜度保证 |
@@ -260,5 +350,101 @@ node --test + 固定夹具（facts/日历/config），CI 即唯一"本地"；时
 | `reconcile` | "现在适合执行昂贵对账"的调度提示 | 同步开关/数据一致性承诺 |
 | `apply` | 执行策略 on_change/enforce（开放枚举） | 是否允许执行的权限 |
 | `kind` / `channel` / `scope` | 开放枚举: 形态/输出通道/数据作用域 | 封闭校验拒绝未知值 |
+| `severity` | **域声明的重要度**: critical/high/normal/low | 与 landing 混用 |
+| `landing` | **落地形态**: urgent/alert/silent（severity 经源配置映射而来） | 与 severity 混用 |
+| `todo` / `todos` | **网关侧**平台中性待办条目/通道 | 服务端出现 reminder |
+| reminder | **手机侧**提醒事项实体（仅手机端文档使用） | 进服务端代码 |
+| `platform` | 设备自报的平台 token（`ios`/`android`），决定下发哪张解析表 | 服务端维护注册表 |
 | 值类型三法则 | 枚举→token 字符串; 数量→number; 真值→boolean | 布尔写成 "true" 字符串 |
-| `i18n.focus_name_to_token` | 显示名→token 反查表, **显示层数据**; 由 ?locales= 请求下发 | 参与比较/写入 LA |
+| `i18n.*` | 显示名映射表, **显示层数据**; 由 `?locales=` 请求下发 | 参与比较/写入 LA |
+
+---
+
+## 19. 数据结构附录（原 BLUEPRINT 各步骤钉死的 schema，提升为契约）
+
+### 19.1 ctx 形状（插件的全部输入）
+
+```js
+ctx = {
+  config,        // 深合并后的只读配置。config 键名(SCREAMING_SNAKE)不属于 API，
+                 // 命名法只约束 API/JSON 输出 token
+  profile,       // device 名，现恒 "default"
+  calendars: [   // ⚠️ 日实例(day-resolved): edge/sources 已把 RRULE/跨天事件解算成逐日实例，
+                 //    插件永不接触重复规则（最重要的边界决定）
+    { date: "YYYY-MM-DD", title, description?,
+      start_time: "HH:MM"|null, end_time: "HH:MM"|null, all_day: bool },
+  ],
+  workdays: [    // workdays-core 原始事实，跨度 ≥ range±16 天（块扫描需要）
+    { date: "YYYY-MM-DD", off: bool, name: "" },
+  ],
+  facts: { streams: { <stream>: [事实...] }, degraded: [<stream>...] },
+  schedules: {}, // 内核注入: 仅含已发布的 deps 产物（未裁剪）
+}
+```
+
+### 19.2 schedule 值 schema（现役全表）
+
+| schedule | owner | 粒度 | 值 |
+|---|---|---|---|
+| restdays | plugins/restdays.js | 日 | `{workday, named_holiday, rest, block}` |
+| presence | plugins/presence.js | 日 | `{workday, rest, block, morning, noon, evening}`，区 token `work\|free\|leave\|out` |
+| school_break | plugins/school-break.js | 日 | `{key, name} \| null` |
+| god_mode | plugins/god-mode.js | 日 | `null \| {fixed, dynamic, quiet}`（见 GOD-MODE.md） |
+| quiet | plugins/quiet.js | 时刻边界 | `"on" \| "off" \| null` |
+| wake_alarms / weekend_class | 同名插件 | 日 | `{fixed: [label...], dynamic: [{label, time:"HH:MM", reason}]}` |
+| ai_quota | plugins/ai-quota.js | 时刻边界 | `true \| false \| null` |
+
+区 token 裁决优先级: **leave > out > 底色**（同区多事件并存时）。
+产出跨度: restdays ±2 天 / presence ±1 天 / quiet 逐日（发布未裁剪，裁剪归 edge/assemble）。
+
+### 19.3 /v2 信封（契约12 实例化）
+
+```json
+{ "version": "2", "generated_at": "2026-07-15 01:30", "device": "default",
+  "mode": "segment", "range": { "start": "...", "end": "..." },
+  "fields": {
+    "focus":  { "kind": "focus",  "apply": "on_change",
+                "value": { "preset": "do_not_disturb", "action": "on", "switch_to": null },
+                "guards": [ { "source": "current_focus", "op": "is", "value": "do_not_disturb" } ],
+                "from": "2026-07-14 20:55" },
+    "silent": { "kind": "scalar", "apply": "on_change", "value": "on", "from": "..." },
+    "media_volume": { "kind": "scalar", "apply": "on_change", "value": 0, "from": "..." }
+  },
+  "alarms": {
+    "window": { "start": "2026-07-15 20:01", "end": "2026-07-16 20:00" },
+    "fixed":  [ { "label": "GateFix-...", "action": "on|off", "scheduled_at": "06:25", "kind": "fixed|class" } ],
+    "dynamic":[ { "label": "GateDyn-...", "at": "YYYY-MM-DD HH:MM", "reason": "..." } ]
+  },
+  "reconcile_alarms": true,
+  "i18n": { "focus_name_to_token": {...}, "focus_token_to_name": {...} },
+  "trace": ["[info] quiet/published: 2 段", "..."] }
+```
+
+- **point 模式**: 每字段以 `changes: [{at, value, previous}]` 替代 value/from，
+  另附 `current_state` 时刻优先投影。
+- **故障降级信封**: `error:"internal_degraded"` + fields 空 + reconcile false + HTTP **200**
+  （**为什么 200 不是 500**: 手机端 fetch 拿到 500 会让整条同步失效；200 + 空状态让手机
+  "安全地什么都不做"）。
+- **窗口语义**: v2 = `(at+1分, at+24h]`，分钟平面排除当前分钟。
+
+### 19.4 事实记录
+
+```json
+{ "at": "YYYY-MM-DD HH:MM", "id": "≤64字符幂等键",
+  "type": "done|reset|set_next", "payload": {} }
+```
+`set_next` 需 `payload.at`。服务端附加 `received_at` / `colo`。
+
+### 19.5 端点与参数总表
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/v2/state` | GET | 采样（`?mode=segment\|point`，默认 segment） |
+| `/v2/timeline` | GET | 全时间线预览/审计（debug 常开: schedules + field_timelines） |
+| `/v2/fact` | POST | 写事实 |
+| `/v2/facts?stream=` | GET | 调试列取 |
+| `/v1/*` | GET | 冻结适配层（剥前缀转交 legacy） |
+| 根路径 | GET | 由 `V2.DEFAULT` 手控（false=legacy，true=/v2/state） |
+
+参数: `?key=`（鉴权，另支持 `X-Gateway-Key` / `Bearer`）· `?date=YYYY-MM-DD`（锚日，任意日期预览）
+· `?now=HH:MM` · `?mode=` · `?device=` · `?locales=zh,en` · `?debug=1` · `?testEvents=` · `?skipCalendar=1`

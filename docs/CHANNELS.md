@@ -10,8 +10,8 @@
 
 | # | 通道 | 穿静音 | 穿专注 | 无人值守建 | 无人值守改 | 无人值守删 | 用户状态 | 备注 |
 |---|---|---|---|---|---|---|---|---|
-| 1 | Fixed 闹钟 `Gate-Fixed-*` | ✅ | ✅ | 预建 | 只开/关 | — | 无 | 自定义铃震；常驻最可靠 |
-| 2 | 动态闹钟 `Gate-ES-*` 等 | ✅ | ✅ | ✅ | ❌（关旧建新） | 需人工确认 | 无 | 默认铃；漏同步=漏响 |
+| 1 | Fixed 闹钟 `GateFix-*` | ✅ | ✅ | 预建 | 只开/关 | — | 无 | 自定义铃震；常驻最可靠 |
+| 2 | 动态闹钟 `GateDyn-*` | ✅ | ✅ | ✅ | ❌（关旧建新） | 需人工确认 | 无 | 默认铃；漏同步=漏响 |
 | 3 | Urgent 提醒（26.2） | ✅实测 | ✅实测 | ✅（Add 有 Urgent 参数） | ✅（铃伴生于日期，改期即改铃；Urgent 开关本身不可改） | 需人工确认 | 完成/贪睡 | 真闹钟+完成语义；只在 Find My 主设备；需"闹钟"权限 |
 | 4 | Bark critical 推送 | ✅实测 | ✅实测 | ✅（服务端 POST） | — | — | 无 | 完全穿透 focus 与 silent；配 call=1 近似伪闹钟 |
 | 5 | Bark timeSensitive | ❌ | ❌实测（DND 下无亮屏无声） | ✅ | — | — | 无 | 呈现被拦**但仍触发自动化** |
@@ -31,7 +31,7 @@ active（无光无声），给人的紧急事件才用 critical。
 
 | severity | 落点 | 语义 |
 |---|---|---|
-| `critical` | 动态闹钟（既有 ES 通道） | 必须打断（还款响铃） |
+| `critical` | 动态闹钟（既有 `GateDyn-ES-` 通道） | 必须打断（还款响铃） |
 | `high` | todo + **Urgent** | 必须打断 + 要完成语义 |
 | `normal` | todo + Alert At Time | 到点提一声，可勾掉 |
 | `low` | todo 无 Alert | 静躺清单 |
@@ -39,7 +39,8 @@ active（无光无声），给人的紧急事件才用 critical。
 | （机器命令） | Bark active | 零打扰门铃 |
 
 同一业务事件允许同时进闹钟通道与 todo 通道（两套 uid 空间、互不相识）。
-mode（urgent/alert/silent）是**出生属性**，事后不可改——变更 = 墓碑旧条 + 新建（见 PROMPT-phone）。
+**landing**（urgent/alert/silent）是**出生属性**，事后不可改——变更 = 墓碑旧条 + 新建
+（见 TODO-CHANNEL.md §10.5）。⚠️ 此字段旧称 `mode`，已按 KERNEL §18 改名（撞 focus preset）。
 
 ## 3. 触发面与执行语义（实测）
 
@@ -48,7 +49,7 @@ mode（urgent/alert/silent）是**出生属性**，事后不可改——变更 =
 **盲窗**：重启后到首次解锁前，通知照常送达呈现，但自动化动作不落地（E3）。
 
 **可用触发器**：时间、闹钟响/**停止**/贪睡（起床钩子：Any Alarm Is Stopped +
-以 Shortcut Input 的 Label 判 `Gate-Fixed-` 前缀，勿在选择器绑死对象、勿用 Goes Off）、
+以 Shortcut Input 的 Label 判 `GateFix-` 前缀，勿在选择器绑死对象、勿用 Goes Off）、
 睡眠日程、到达/离开地点、充电器连接/断开、电量、CarPlay、蓝牙/WiFi、NFC、App 开/关、
 专注开/关、收到通知（App + Title/Message/Subtitle contains 过滤）、
 收到邮件（Sender/Recipient/Subject/Account）、收到信息、声音识别。

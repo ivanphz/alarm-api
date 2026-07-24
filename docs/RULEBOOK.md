@@ -1,6 +1,6 @@
 # RULEBOOK.md — 规则说明书（以后怎么改，把什么交给 AI）
 
-> 定位: KERNEL.md 是宪法（不许违反什么），BLUEPRINT.md 是施工史（当时怎么建的），
+> 定位: KERNEL.md 是宪法（不许违反什么），DEVLOG.md 是踩坑与决策考古（当时为什么这么建），
 > 本文档是**操作手册**（今后想改 X → 动哪层 → 给 AI 哪些文件 → 验收标准是什么）。
 
 ---
@@ -14,7 +14,7 @@
       ↓ 每条规则 = 一个插件文件，只查词汇表，产出一条 on/off/null 时间线
 字段（focus / silent / media_volume / ai_available）
       ↓ 五旋钮订阅某条规则（USE/MAP/SKIP/OWN/APPLY，纯配置）
-手机执行器（PHONE-V2.md）
+手机执行器（PHONE.md）
 ```
 
 改动永远问自己: 我改的是**事实**（世界是什么样）、**决策**（该做什么）、
@@ -48,22 +48,23 @@
 | 改现有决策树(quiet 分支) | 决策 | §4 标准包 + quiet.js + quiet.e2e.test.js | 改逻辑必改测试 |
 | 新人生事实(如"旅行中") | 事实(新插件/presence) | §4 标准包 + presence.js + grammar.js | 新词→grammar，新谓词→本表登记 |
 | 闹钟集合口径 | 决策 | §4 标准包 + wake-alarms.js 或 weekend-class.js | 标签语法冻结(KERNEL §12) |
-| 新周期任务(宝箱/签到) | V13 cadence | §4 标准包 + ai-quota.js 当范本 | 泛化前照 ai-quota 抄形态 |
-| 新手机能力字段 | 订阅 + 手机 | V2.FIELDS + PHONE-V2.md | 手机侧新指令 |
+| 新周期任务(宝箱/签到) | cadence(待泛化) | §4 标准包 + ai-quota.js 当范本 | 泛化前照 ai-quota 抄形态 |
+| 新手机能力字段 | 订阅 + 手机 | V2.FIELDS + PHONE.md | 手机侧新指令 |
 | 改信封/端点/采样 | edge | 慎: §4 标准包 + router/assemble | 动手机契约，需灰度 |
 | 想动 kernel/ 目录 | ⛔ | 先停 | 违反验收九条 = 设计错了，回本表重选层 |
 
 ## 4. 委托 AI 的标准包与开场白
 
-**标准包（每次都给）**: `docs/KERNEL.md`（宪法）+ `docs/RULEBOOK.md`（本文）+
-目标层的 1 个范本文件 + 对应测试文件。按配方表补目标文件。BLUEPRINT 通常不用给
-（历史），除非涉及 ctx/值 schema 细节（其 §② §③ §④ 各有 schema 定义）。
+**标准包（每次都给）**: `docs/KERNEL.md`（宪法，含 §19 数据结构附录）+ `docs/RULEBOOK.md`（本文）
++ 目标层的 1 个范本文件 + 对应测试文件。按配方表补目标文件。
+ctx/信封/值 schema 全在 KERNEL §19，不必再翻历史文档。
 
 **开场白模板（复制可用）**:
 > 这是我的 alarm-api V12（Cloudflare Worker，插件化内核）。KERNEL.md 是宪法，
-> 十五条契约不可违反，重点: 插件纯函数禁 I/O 禁读钟(契约7)、消费者只认规则名(契约15)、
+> **十五条**契约不可违反，重点: 插件纯函数禁 I/O 禁读钟(契约7)、消费者只认规则名(契约15)、
 > null 三义=无主张/压制/释放(契约2/4)、API 全 snake_case token(命名法)、
-> Gate 标签语法冻结(§12)、单 owner(契约6)。事实词汇表见 RULEBOOK §2，禁止自算节假日。
+> Gate 标签语法冻结(§12: GateFix-/GateDyn- 两族)、单 owner(契约6)。
+> 事实词汇表见 RULEBOOK §2，禁止自算节假日。
 > 任务: 【写清楚要什么，用 §2 的谓词描述条件】。
 > 交付: 插件/配置改动 + node --test 测试（照附上的测试文件风格），
 > 并自查 RULEBOOK §3 的层位与 KERNEL §15 验收九条——碰 kernel/ 即返工。
@@ -90,14 +91,14 @@ FIELDS.silent 一行。**独立 quiet 不存在这个任务**——quiet 本来�
 2. 改动落在 §3 声明的层位，kernel/ 目录 diff 为零。
 3. 新事实谓词已登记进本文 §2；新时刻已核对 DND.WHITELIST（或接受 audit warn）。
 
-## 7. 上帝模式 JSON 模板（v2 规范格式；v1 旧词汇 fixedAlarms/dnd_schedule/ON-OFF 永久兼容）
+## 7. 上帝模式（完整说明见 docs/GOD-MODE.md）
 
-日历标题含 [上帝模式]，描述贴:
+日历标题含 [上帝模式]，描述贴 JSON（v2 规范格式；v1 旧词汇 fixedAlarms/dnd_schedule/ON-OFF 永久兼容）:
 ```json
-{ "fixed":   [ { "label": "Gate-Fixed-Workday-WakeUp-Vib", "action": "on" } ],
-  "dynamic": [ { "label": "Gate-Dynamic-Event-0530", "time": "05:30", "reason": "赶早班机" } ],
+{ "fixed":   [ { "label": "GateFix-Workday-WakeUp-Vib", "action": "on" } ],
+  "dynamic": [ { "label": "GateDyn-Event-0530", "time": "05:30", "reason": "赶早班机" } ],
   "quiet":   { "07:40": "on", "22:25": "off" } }
 ```
-要点: 全 token 小写; 未列出的固定闹钟 = 全灭(完全接管); dynamic 的 label 建议与 time
-对齐(HHMM 入名)以便排查; quiet 同值重申会被归一化吸收属正常; ICS 转义(\,)与
-智能标点均已由网关容错。
+要点: 全 token 小写; 未列出的固定闹钟 = 全灭(完全接管); dynamic 的 label 须与 time
+对齐(HHMM 入名，否则改时间静默失效); quiet 同值重申会被归一化吸收属正常;
+ICS 转义(\,)与智能标点均已由网关容错。**可复制模板与排错见 GOD-MODE.md。**

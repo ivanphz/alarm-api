@@ -79,10 +79,10 @@ per-device 数据绝不进他设备的 ctx 与 trace(含隐私)。
 |---|---|---|
 | **`todo` 一词指三样东西(核心歧义)** | 见下方"todo 三层定义"分别命名 | 聊天说"做todo"分不清指方向/通道/字段; 且todo↔reminder贴太近 |
 | `reminder`/reminders 在服务端出现 | 服务端一律 `todo`; `reminder` 只存在于手机端文档(落地成"提醒事项") | 平台中性铁律: 网关不说 iPhone 概念 |
-| `EXTERNAL_ALARMS`(config/env) | `EXTERNAL_ALARM_SOURCES` 或纳入统一 `EXTERNAL_SOURCES.alarm` | 与未来 todo 源/日历源统一为"外部源"家族 |
+| `EXTERNAL_ALARMS`(config/env) | `EXTERNAL_ALARM_SOURCES` 或纳入统一 `EXTERNAL_SOURCES.alarm` | 与未来 todo 源/日历源统一为"外部源"家族。现役文档见 EXTERNAL-SOURCES.md |
 | `Gate-ES`(外部源闹钟) | 已改 `GateDyn-ES`; ES 语义"external source"保留 | v0.7 已做 |
 | 外部源 `type: 'ics'|'json'` 必填 | 降为可选(嗅探优先，见 §5) | 最大兼容 |
-| todo 提示词 `mode` | 已定 `landing` | v0.7 附录已定 |
+| todo 提示词 `mode` | 已定 `landing` | 已落 TODO-CHANNEL.md 与 KERNEL §18 |
 | `switch_to`(focus, 未实装) | 保留但文档标注"未实装，非null执行器忽略不报错" | 已在术语表 |
 | `severity` vs `landing` vs 分级 token | severity=域声明重要度(high/normal/low/critical); landing=落地形态(urgent/alert/silent); 二者不同层，映射在网关源配置 | 明确两者非同义 |
 
@@ -142,10 +142,11 @@ EXTERNAL_SOURCES: [
 
 ---
 
-## 9. 实施优先级中的位置（相对 INDEX P1–P8）
+## 9. 实施优先级中的位置（相对 HANDOFF §6 路线图）
 ```
-近: P1 todo通道 → P2 Bark → P-观测/建议/自愈(FEEDBACK-SELFHEAL) → P4 cadence
+首: P0 设备抽象层重构(DEVICE-ABSTRACTION) —— 多平台方向的前提，其余都排它后面
+近: P1 todo通道 → P2 Bark → P3 观测/建议/自愈(FEEDBACK-SELFHEAL) → P4 cadence
 中: 格式嗅探器(§5, 随 todo 源一起做最省) → 术语清扫(§6, 随外部源改名一起)
-远: P6 可视化(只读) → 网页配置DSL(§1) → PROFILES多设备(P8)
+远: P5 可视化(只读) → 网页配置DSL(§1) → PROFILES多设备(P7)
 极远: 多用户(§4, 可能永不做)
 ```
