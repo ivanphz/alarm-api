@@ -1,3 +1,7 @@
+> ⚠️ **guards 的结构以 docs/DEVICE-ABSTRACTION.md 为准**（2026-07-20 定稿）:
+> op 收敛为 in/not_in、value 为语义 token 数组、i18n 并入 resolve、两作用域声明合并下发。
+> 本文以下关于 guards 结构的描述属早期版本，保留仅供理解演进过程；§2 能力对等审计仍有效。
+
 # GUARDS-AND-PARITY.md — 守卫泛化设计 + v1→v2 能力对等审计
 
 > 起因(2026-07-17): 用户在拼装中发现 ① 守卫可扩展到锁屏/当前App等更多条件；
@@ -14,7 +18,13 @@ v1/v2 的守卫只有一种: focus 值里的 `only_if_current`(检查当前专�
 用户需求: "某 App 开着才归零音量 / 开着就不归零"、"锁屏时不执行"等 → 需要更多实况源。
 
 ### 1.2 设计：字段值携带 guards 数组（服务端下发，手机通用循环）
-任意字段(focus/silent/media_volume/…)的值可带 `guards`:
+任意字段可带 `guards`，两种来源(都下发到**字段级** `fields.<x>.guards`，手机读法统一):
+- **focus(值内 per-boundary)**: OWN.guards 或 only_if_current，随时间边界变化。
+- **标量字段(config 字段级)**: `FIELDS.<field>.GUARDS = [...]`，作用于整个字段——
+  如 media_volume 配 `GUARDS:[{source:"app",op:"not_in",value:["com.apple.Maps"]}]`，
+  导航 App 前台时不归零音量。**这解决了"开着导航 App 不动音量"的需求。**
+
+示意(focus 值内)：
 ```json
 "media_volume": {
   "value": 0,
@@ -41,7 +51,10 @@ v1/v2 的守卫只有一种: focus 值里的 `only_if_current`(检查当前专�
 | `wifi`(未来) | Get Network Details: SSID | 文本 | 特定网络 |
 | `battery`(未来) | Get Device Details: Battery Level | 数字 | 低电量 |
 
-**op 词表**: `is` | `is_not` | (未来) `gt` | `lt` | `contains`。
+**op 词表**: `is` | `is_not`(单值) | `in` | `not_in`(集合,value=数组) | (未来) `gt`/`lt`。
+**否决 contains 做集合判断**: bundle id 前缀高度重合(com.app.a ⊂ com.app.about)，子串匹配
+会误命中; 且 contains 语义应是"字段含子串"非"属于集合"。集合用 in/not_in + 数组遍历精确
+相等(手机 CheckGuards G29a-G29n; 服务端校验 in/not_in 的 value 必须数组，否则丢弃+告警)。
 
 ### 1.4 手机端 CheckGuards（通用循环，一次写好，加 source 只加分支）
 ```

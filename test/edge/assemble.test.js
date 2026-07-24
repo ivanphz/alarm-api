@@ -93,3 +93,42 @@ test("guards 翻译: only_if_current → 统一 guards; 手机只见 guards; 标
   assert.equal(out.fields.silent.value, "off");         // 标量无守卫，不带 guards
   assert.equal(out.fields.silent.guards, undefined);
 });
+
+test("guards 校验: in/not_in 接受数组; 未知 op/source 丢弃并告警; is 转文本", () => {
+  const run = (guards) => {
+    const tr = [];
+    const F = { focus: { KIND: "focus", USE: "quiet", PRESET: "do_not_disturb",
+                         APPLY: "on_change", OWN: { "07:40": { action: "off", guards } } } };
+    const out = assembleState({
+      fieldsConfig: F, schedules, range,
+      at: "2026-07-15 08:00", mode: "segment", trace: tr,
+    });
+    return { g: out.fields.focus.guards, trace: tr };
+  };
+  let r = run([{ source: "app", op: "in", value: ["com.a", "com.b"] }]);
+  assert.deepEqual(r.g, [{ source: "app", op: "in", value: ["com.a", "com.b"] }]);  // in 保留数组
+  r = run([{ source: "app", op: "not_in", value: "com.a" }]);
+  assert.equal(r.g, undefined);                                  // not_in 非数组 → 丢弃
+  assert.ok(r.trace.some((x) => x.ref === "bad_guard" && (x.msg||"").includes("必须是数组")));
+  r = run([{ source: "app", op: "startsWith", value: "com" }]);
+  assert.ok(r.trace.some((x) => (x.msg||"").includes("未知 guard.op")));
+  r = run([{ source: "gyroscope", op: "is", value: "x" }]);
+  assert.ok(r.trace.some((x) => (x.msg||"").includes("未知 guard.source")));
+  r = run([{ source: "locked", op: "is", value: true }]);
+  assert.deepEqual(r.g, [{ source: "locked", op: "is", value: "true" }]);           // is 单值转文本
+});
+
+
+test("字段级 GUARDS: 标量字段(volume)经 config.GUARDS 下发到字段级，手机读法同 focus", () => {
+  const F = {
+    media_volume: { KIND: "scalar", USE: "quiet", MAP: { on: 0, off: null }, APPLY: "on_change",
+                    GUARDS: [{ source: "app", op: "not_in", value: ["com.apple.Maps"] }] },
+  };
+  const out = assembleState({
+    fieldsConfig: F, schedules, range,
+    at: "2026-07-15 21:00", mode: "segment", trace: [],   // 20:55 后 quiet on → volume 0
+  });
+  assert.equal(out.fields.media_volume.value, 0);          // 值仍是裸标量
+  assert.deepEqual(out.fields.media_volume.guards,         // 守卫在字段级(与 fields.focus.guards 同位)
+    [{ source: "app", op: "not_in", value: ["com.apple.Maps"] }]);
+});

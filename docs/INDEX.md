@@ -18,7 +18,8 @@
 | **HANDOFF.md** | 交接契约 | ⭐换对话开发 todo通道/cadence 必读: 阅读顺序+不变量+落点+防偏移 |
 | **HORIZON.md** | 远期方向 | 可视化/多设备/多用户/网页配置/格式嗅探/术语清扫; 只钉形状不写码 |
 | **FEEDBACK-SELFHEAL.md** | 方向定稿 | 回传+闹钟对账自愈(接口已冻结) |
-| **GUARDS-AND-PARITY.md** | 方向+审计 | 守卫泛化(guards数组,预留锁屏/App等) + v1→v2能力对等审计 + 多语言待测 |
+| **GUARDS-AND-PARITY.md** | 方向+审计 | 守卫泛化 + v1→v2能力对等审计（guards 结构以 DEVICE-ABSTRACTION 为准） |
+| **DEVICE-ABSTRACTION.md** | ⭐设计定稿·待实施 | 跨平台设备抽象: 语义token+resolve解析表、guards两作用域、platform自报、安卓预留。**下一步开发的主任务** |
 
 ## 待建模块文档（V13 蓝图，随实施转正）
 

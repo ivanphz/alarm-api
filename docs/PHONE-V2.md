@@ -79,11 +79,26 @@ G26   End If
 G27   If → GOp is → is_not
 G28     If →（CurMark）is →（ValMark）→ Stop and Output: SKIP       （短路同上）
 G29   End If
+        ══ 集合守卫 in / not_in（GValue 是【数组】，遍历精确相等，无子串误匹配）══
+G29a  If → GOp is → in
+G29b    Text: 0 → Set Variable: Matched
+G29c    Repeat with each V in GValue →
+G29d      Text: X（插入 V）→ Set Variable: VMark
+G29e      If →（CurMark）is →（VMark）→ Text: 1 → Set Variable: Matched → End If
+G29f    End Repeat
+G29g    If → Matched is → 0 → Stop and Output: SKIP                 （当前不在集合 → 拦截）
+G29h  End If
+G29i  If → GOp is → not_in
+G29j    Repeat with each V in GValue →
+G29k      Text: X（插入 V）→ Set Variable: VMark
+G29l      If →（CurMark）is →（VMark）→ Stop and Output: SKIP        （命中集合任一 → 拦截）
+G29m    End Repeat
+G29n  End If
 G30 End Repeat
 G31 Stop and Output → GuardResult                                   （全部通过 → PASS）
 ```
 
-**op 词表**: is | is_not（未来 gt/lt/contains 加分支于 G24 区）。
+**op 词表**: is | is_not | **in | not_in**(集合，value 为数组，精确相等无子串误配)（未来 gt/lt）。
 **source 词表**: current_focus | app | locked（未来 charging/wifi/battery）。
 **为何 CheckGuards 独立**: 三字段共用一套守卫逻辑；加守卫种类只改此指令一处，
 字段主逻辑永不动 —— 这是"加分支不回插"的落地。
@@ -96,7 +111,7 @@ G31 Stop and Output → GuardResult                                   （全部�
 S1  Text: BASE/state → URL → Get Contents of URL(GET)
 S2  Get Dictionary from Input →（S1）→ Set Variable: Cloud
     ── 守卫（§1）──
-S3  Get Dictionary Value: fields.silent.guards → in Cloud → Set Variable: Guards   （字段级，与 value 同级）
+S3  Get Dictionary Value: fields.silent.guards → in Cloud → Set Variable: Guards   （字段级；标量字段守卫读法与 focus 完全一致）
 S4  Dictionary: { guards: Guards, cloud: Cloud } → Run Shortcut: CheckGuards →入 → Set: GuardResult
 S5  If → GuardResult is → SKIP → Stop This Shortcut → End If     （守卫拦截，不动手不落账）
     ── 期望 + 记忆 ──
@@ -124,6 +139,10 @@ S19 End If
 V-a  S17 执行段换: Calculate →（S6 原始数字）÷ 100 → Set Volume ←（结果）
      （算术用原始数字；比较/落账用文本）
 V-b  其余全同（守卫 S3-S5、标记判空 S7、null 写 none、enforce、落账）
+V-c  **App 守卫典型用途**: config 给 media_volume 配 GUARDS 如
+     `[{source:"app", op:"not_in", value:["com.apple.Maps","com.google.Maps"]}]`
+     → 导航 App 前台时 CheckGuards 返回 SKIP → 跳过归零，导航音量不被动。
+     手机端零额外代码——守卫在字段级(fields.media_volume.guards)，S3-S5 已覆盖。
 ```
 
 ## §4 ApplyFocus（独立指令；v1 变量机制 + 云端本机名 + 守卫）

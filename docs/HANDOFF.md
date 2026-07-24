@@ -46,6 +46,17 @@ workdays-core(事实) → **calendar-api**(决策，另一仓库) → **alarm-ap
     不能只搬"当前配置用到的部分"(教训: v1→v2 曾丢 Set Focus 变量机制与守卫完整能力，
     见 docs/GUARDS-AND-PARITY.md §2)。审计表模板在该文档。
 
+## 2.5 ⚠️ 当前首要任务: 设备抽象层重构（docs/DEVICE-ABSTRACTION.md）
+
+**接手第一件事不是 todo 通道，是这个重构** —— 它为两处失误买单，且是安卓移植的前提:
+① 曾把 iOS 包名(`com.apple.Maps`)写进 guards 契约 → 平台细节漏进契约，安卓必返工;
+② 曾为兼容硬加字段级裸 `GUARDS`，与值内 guards 形成两个来源 → 不统一。
+**设计已定稿(DEVICE-ABSTRACTION.md)，含完整迁移清单，照做即可。核心不变量见该文 §7。**
+跨平台铁律追加(与 §2 九条同级):
+- **契约零平台字符串**: fields/guards 里永不出现包名、本地化名、平台特有词，只有语义 token。
+- **平台差异由数据消化**: 标识符差异→云端 resolve 表; 能力差异→设备能力声明; 执行机制→执行器自己的事。
+- **手机端零平台知识**: 执行器是通用解释器，加 App/语言/平台皆为云端数据变动。
+
 ## 3. 两个优先任务的专属契约
 
 ### 3.A todo 通道（P1）—— 读 PROMPT-alarm-api-todo-channel.md + **必配 V12-ADDENDUM.md**
@@ -102,6 +113,9 @@ workdays-core(事实) → **calendar-api**(决策，另一仓库) → **alarm-ap
 ## 附: 当前状态锚点（交接时点）
 - KERNEL v0.7 / 72 用例全绿 / v2 未正式切默认(手机灰度中，ApplyState 拼装阶段)
 - 已实现: 全部决策插件 + 字段 + 闹钟 + ai_quota(cadence 特例) + i18n下发 + /v2/fact
+- **首要**: 设备抽象层重构(DEVICE-ABSTRACTION.md，设计定稿待实施，含迁移清单)
 - 方向已定稿未实施: todo通道(P1)、Bark(P2)、回传自愈(P3,FEEDBACK-SELFHEAL.md)、
   cadence泛化(P4)、可视化/网页配置/多设备(HORIZON.md)、格式嗅探/术语清扫(HORIZON§5-6)
+- ⚠️ 现有代码含两处待重构痕迹(裸 GUARDS、router 里的 bundle id 示例)，
+  按 DEVICE-ABSTRACTION §6 迁移清单清理
 - 待你补入仓库的对话产出文档: CHANNELS.md、三份 PROMPT-*(见 docs/_RECREATE_NOTE.txt)

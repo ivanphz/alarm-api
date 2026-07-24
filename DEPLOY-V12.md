@@ -1,3 +1,9 @@
+> ⚠️ **构建失败 "Could not resolve ./v1-legacy.js" 的根因(已修)**: /v1 冻结路径需要
+> **五个 V11 文件**在 src/ 根目录且文件名精确: v1-legacy.js(原 V11 index.js 改名)、
+> rules.js、rest-days.js、device-state.js、school-break.js。缺任一 → Cloudflare
+> 构建期(解析全部 import)失败。本包已补齐并全图校验(31 文件可达)。**直接用本包 src/
+> 整体覆盖你仓库 src/**，勿手动逐个改名(易大小写/遗漏出错)。
+
 # DEPLOY-V12.md — 部署与验收清单
 
 ## 1. 入库（本包 = 完整仓库树，直接整体替换）

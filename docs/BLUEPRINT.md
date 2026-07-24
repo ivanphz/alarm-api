@@ -501,3 +501,62 @@ token 故签名跨语言稳定**(AI 未提但关键，否则换语言签名变�
 优化二采纳: 无脑清场在"当前已是目标专注"时 On→Off→On 翻转，连累绑该专注的其他 iOS 自动化
 误触发两次 → F24a 加"当前专注在候选名单里则跳过清场"，循环内 Turn On 幂等覆盖。
 纯手机文档批次，服务端未动(签名在手机侧拼)，73 用例不变。
+
+---
+
+## 构建阻断修复: v1-legacy 文件闭包补齐 ✅ 2026-07-20
+
+Cloudflare 构建反复报 "Could not resolve ./v1-legacy.js"。根因: 包内 src/ 一直**缺失
+v1 冻结路径的文件** —— index.js 引 ./v1-legacy.js 但该文件从未创建，且其依赖链
+rules.js/rest-days.js/device-state.js/school-break.js(v1版) 也不在包内。测试未暴露是因为
+用例只 import v2 的 router/plugins，从不走 index.js 的 legacy 分支; 唯有 Cloudflare 构建
+解析全部 import 才触发。修复: 从原始 v11 zip 提取五文件放 src/ 根(v1 school-break.js 与
+v2 plugins/school-break.js 不同路径共存不冲突)。全图解析校验 31 文件从 index 可达、无缺失。
+教训: 交付含双轨(冻结+现役)的包，必须做"从入口全图解析"校验，不能只靠单测(单测可能永不
+触及冻结路径的 import)。此校验脚本纳入交付纪律。
+
+---
+
+## guards 集合算子 in/not_in 落地 ✅ 2026-07-20（74 用例）
+
+需求"App 是 A 或 B 才执行/不执行"。否决第三方 AI 的 contains 方案(bundle id 前缀重合致
+子串误配、语义名不符实、分隔符字符串倒退)。采纳 in/not_in + 真数组:
+① 服务端(assemble.js validateGuard): op 白名单 is/is_not/in/not_in + source 白名单;
+   in/not_in 的 value 必须数组否则丢弃+trace 告警(不静默放行坏守卫); is/is_not 单值转文本。
+   guards 现可经 FIELDS.OWN.guards 直接声明(fields.js focus 值透传), 或 only_if_current 翻译。
+② 手机 CheckGuards G29a-G29n: in/not_in 各一个 Repeat 遍历数组做标记法精确相等,
+   命中/未命中 Stop and Output 短路。无子串误配。
+③ 语义自洽: is=in 单元素特例、is_not=not_in 特例; is/is_not 管单值, in/not_in 管集合,
+   gt/lt(未来)管数值。KERNEL §18 op 登记。
+注: scalar 字段(silent/volume)带 guards 需 value 包装成 {value,guards}, 属未来扩展;
+   focus 已支持(值本就是对象)。
+
+---
+
+## 标量字段 App 守卫落地(volume 遇导航不归零) ✅ 2026-07-20（75 用例）
+
+用户需求: 开着导航 App 时不归零音量。之前标为"未来扩展"(以为要 value 包 {value,guards})，
+实则更优雅: **guards 已在字段级(fields.<x>.guards, 与 value 同级)**，标量字段的 guards 
+直接放字段级即可，value 保持裸标量、形态不动。实现: fields 字段 config 加 `GUARDS` 数组，
+assemble.js 校验后附到字段级(与 focus 值内守卫合并下发)。手机端 ApplySilent/ApplyVolume 
+的 S3-S5(读 fields.<x>.guards + CheckGuards)**零额外代码**——三字段守卫读法完全统一。
+router V2_DEFAULTS 给 media_volume 留 GUARDS 注释示例(导航/地图 App not_in)。
+零破坏: 没配 GUARDS 的字段行为不变。GUARDS-AND-PARITY 标量守卫从"未来"转"已支持"。
+
+---
+
+## 设备抽象层设计定稿（待实施）📐 2026-07-20
+
+Ivan 指出两处失误: ① guards 的 app 值直接写 iOS 包名 → 平台细节漏进契约，安卓移植必返工;
+② 我为兼容硬加字段级裸 GUARDS，与值内 guards 两个来源不统一。且明确要求**先设计后编码**
+(我此前未经同意即改代码，已认错)。产出 **docs/DEVICE-ABSTRACTION.md 设计定稿**:
+- 平台差异分三类各归一层: 标识符→语义token+resolve解析表; 能力→设备能力声明(只留形状);
+  执行机制→执行器自己的事。
+- resolve 节统一 focus_preset 与 app 两类表，按 platform/locales 下发; **token→数组恒定**,
+  查不到=空展开语义自动正确(苹果地图不在安卓表里天然成立)。
+- **两大简化**: i18n 反查表删除(守卫改成员判断，与 app 守卫机制统一); op 收敛为 in/not_in
+  两个(is/is_not 服务端翻译为单元素)，手机端只剩两个分支。
+- guards 两作用域(GUARDS_ALWAYS 恒常 / OWN.guards 时点)声明分开、下发合并为一个数组。
+- platform 由设备自报(?platform=)，服务端不维护注册表; 安卓只留形状不建实体。
+- 含完整迁移清单(服务端/文档/手机端)与八条不变量。INDEX/HANDOFF 已挂为**下一步首要任务**。
+**本批次零代码改动**，代码保持 75 用例状态，待 Ivan 确认设计后由后续会话实施。

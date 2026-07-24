@@ -15,21 +15,42 @@ export function renderTrace(trace) {
     typeof t === "string" ? t : `[${t.level}] ${t.plugin}/${t.ref}: ${t.msg}`);
 }
 
+// guards 词表（KERNEL §18 登记；开放枚举但校验已知项，未知项响亮告警不静默放行）
+const GUARD_OPS = new Set(["is", "is_not", "in", "not_in"]);        // 未来: gt/lt
+const GUARD_SOURCES = new Set(["current_focus", "app", "locked"]); // 未来: charging/wifi/battery
+
+// 校验并归一化单条 guard：op/source 合法性 + in/not_in 的 value 必须数组。
+// 非法 → 返回 null(丢弃该条) + 记 trace，绝不静默放行一条坏守卫（治理硬失败哲学）。
+function validateGuard(g, trace) {
+  const T = (msg) => trace && trace.push({ level: "warn", plugin: "guards", ref: "bad_guard", msg });
+  if (!g || typeof g !== "object") { T(`守卫非对象，已丢弃: ${JSON.stringify(g)}`); return null; }
+  if (!GUARD_SOURCES.has(g.source)) { T(`未知 guard.source "${g.source}"，已丢弃（合法: ${[...GUARD_SOURCES].join("/")}）`); return null; }
+  if (!GUARD_OPS.has(g.op)) { T(`未知 guard.op "${g.op}"，已丢弃（合法: ${[...GUARD_OPS].join("/")}）`); return null; }
+  if (g.op === "in" || g.op === "not_in") {
+    if (!Array.isArray(g.value)) { T(`guard.op ${g.op} 的 value 必须是数组，实为 ${typeof g.value}，已丢弃`); return null; }
+    return { source: g.source, op: g.op, value: g.value.map(String) };
+  }
+  // is/is_not: value 转文本（单值）
+  return { source: g.source, op: g.op, value: String(g.value) };
+}
+
 // 守卫归一化 → 返回 { value, guards }（guards 提到【字段级】，与 value 同级，三字段路径一致）。
 // only_if_current 是单守卫语法糖: 翻译成 current_focus/is 条目并入 guards、从 value 移除。
 // 手机端一律读 fields.<x>.guards，永不读 only_if_current，也不从 value 内部取 guards。
-function extractGuards(value) {
-  const guards = [];
+function extractGuards(value, trace) {
+  const raw = [];
   let outValue = value;
   if (value && typeof value === "object") {
-    if (Array.isArray(value.guards)) guards.push(...value.guards);
+    if (Array.isArray(value.guards)) raw.push(...value.guards);
     if (value.only_if_current != null) {
-      guards.push({ source: "current_focus", op: "is", value: value.only_if_current });
+      raw.push({ source: "current_focus", op: "is", value: value.only_if_current });
     }
     const { guards: _g, only_if_current: _o, ...rest } = value;
     outValue = rest;
   }
-  return { value: outValue, guards };   // guards 恒为数组(可空); 空数组=手机 CheckGuards 见空即 PASS
+  // 逐条校验归一化；非法条目丢弃并告警（不静默放行坏守卫）
+  const guards = raw.map((g) => validateGuard(g, trace)).filter(Boolean);
+  return { value: outValue, guards };   // 空数组=手机 CheckGuards 见空即 PASS
 }
 
 export function assembleState({
@@ -50,17 +71,22 @@ export function assembleState({
   for (const [name, segs] of Object.entries(timelines)) {
     const cfg = fieldsConfig[name] || {};
     const meta = { kind: cfg.KIND ?? "scalar", apply: cfg.APPLY ?? "on_change" };
+    // 字段级 GUARDS（config 声明，作用于整个字段——如 volume 遇导航 App 不归零）
+    const fieldGuards = Array.isArray(cfg.GUARDS)
+      ? cfg.GUARDS.map((g) => validateGuard(g, trace)).filter(Boolean) : [];
     if (mode === "point") {
       const changes = samplePoint(segs, at, tolerances).map((c) => {
-        const { value, guards } = extractGuards(c.value);
+        const { value, guards } = extractGuards(c.value, trace);   // 值内守卫(focus per-boundary)
         return guards.length ? { ...c, value, guards } : { ...c, value };
       });
       fields[name] = { ...meta, changes };
     } else {
       const seg = sampleSegment(segs, at);                   // { value, from }
-      const { value, guards } = extractGuards(seg.value);
+      const { value, guards } = extractGuards(seg.value, trace);
       fields[name] = { ...meta, ...seg, value };
-      if (guards.length) fields[name].guards = guards;       // 字段级，仅在有守卫时附
+      // 合并: 值内守卫(focus) + 字段级守卫(标量 GUARDS)，都在字段级下发，手机读法统一
+      const all = [...guards, ...fieldGuards];
+      if (all.length) fields[name].guards = all;
     }
   }
 

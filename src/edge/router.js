@@ -42,6 +42,8 @@ export const V2_DEFAULTS = {
       KIND: "scalar", USE: "quiet", APPLY: "on_change",
       MAP: { on: 0, off: null },   // 该安静→归零(每次进入重申); 解除→无主张(白天音量归人管)
       OWN: {},                     // 单位: 整数 0–100（契约§5）。契约15: 订阅声明取代抄数字
+      // 字段级守卫示例(取消注释启用): 导航/音乐 App 前台时不归零音量
+      // GUARDS: [{ source: "app", op: "not_in", value: ["com.apple.Maps", "com.google.Maps"] }],
     },
     "cadence.ai_claude": { KIND: "scalar", USE: "ai_quota", APPLY: "on_change", OWN: {} },
   },
