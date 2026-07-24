@@ -149,6 +149,10 @@ FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
    `focus_token_to_name`（执行段: token → **本机名候选数组**，逐个试开验证，成功即止）。
    种子表（2026-07-16 实测冻结）在 `src/edge/i18n.js`，含 en/zh/ja/ko：
    `do_not_disturb` / `sleep` / `personal` / `work` / `driving` / `reduce_interruptions`；空文本 = `none`。
+   > **零维护逃生门（实测记录在案，不强求）**: 内置专注的显示名随系统语言变，所以才需要这张表；
+   > 而**用户自建的自定义专注，其名称不随语言变**。若某天嫌维护翻译表烦，可自建一个自定义专注
+   > 替代内置勿扰 —— 表里加一行固定名，从此换语言零影响。
+   >
    > ⚠️ **本节将被 DEVICE-ABSTRACTION 重构替换**: 反查表 `focus_name_to_token` 删除、
    > `focus_token_to_name` 并入 `resolve.focus_preset`、守卫改成员判断。实施前以本节为准，
    > 实施后以 DEVICE-ABSTRACTION §2 为准。
@@ -272,6 +276,10 @@ src/
 | 7 | 新输入源 | ctx.sources 数组 |
 | 8 | 新输出形态/通道 | pulse/channel token |
 | 9 | 新周期任务 | CADENCE.TASKS 一节纯配置 |
+
+> ⚠️ **第 3 条当前有一个已知例外**: 若新规则是"非字段订阅型"（事实/闹钟集合/派生提醒），
+> 必须去 `kernel/audit.js` 的硬编码豁免名单登记，否则被误报孤儿 —— 即**内核并非零改动**。
+> 这是待修的契约破口，修法（豁免改插件自声明）见 HANDOFF §7.1。修好前请知悉此例外。
 
 ## 16. 测试纪律
 
