@@ -303,7 +303,7 @@ export const DEFAULT_CONFIG = {
   // 【定位/甲方规矩】只做"具体点搬运工": 收具体 date+time → 24h 裁剪 → 幂等对账。
   //   不做排期/循环/业务计算(工作日、间隔、自然月去重、跳节假日…由乙方算好再喂进来)。
   //   简单重复(每周/每月固定日)请用 iPhone 时钟 App 建重复闹钟, 不走此接口。
-  // 【准入 = 强制识别; 完整对接契约见 docs/external-alarms.md, 内部机制见 external-alarms-internal.md】
+  // 【准入 = 强制识别; 完整对接契约见 docs/EXTERNAL-SOURCES.md, 内部机制见 external-alarms-internal.md】
   //   ICS : 事件【任意字段】放标签 [[ES:uid]](标题/备注/分类/X- 皆可, 括号在即准入,
   //         内含 uid; 裸 [[ES]] 回退 VEVENT 原生 UID)。markPattern 可覆盖默认正则。
   //   JSON: 每条必带 uid 字段。
@@ -336,7 +336,7 @@ export const DEFAULT_CONFIG = {
   //   GOD_MODE   = 完全手动接管当天（事件 DESCRIPTION 填 JSON，格式见 rules.js R1）
   // ───────────────────────────────────────────────────────────────────────────
   KEYWORDS: {
-    GOD_MODE:   ["上帝模式", "JSON"],   // 完整用法/可复制模板见 docs/god-mode.md
+    GOD_MODE:   ["上帝模式", "JSON"],   // 完整用法/可复制模板见 docs/GOD-MODE.md
     LEAVE:      ["休假", "请假", "年假"],
     WORK_EVENT: ["出差", "会议", "外勤", "风勘", "覆盖", "晚到", "早到", "早起"]
   },
