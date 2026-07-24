@@ -28,7 +28,6 @@
 |---|---|---|
 | `BLUEPRINT.md` | V12 分步施工图 | 各步骤钉死的 **schema 已提升为 `KERNEL.md` §19 数据结构附录**（那是契约不是历史）；裁决流水已并入 `DEVLOG.md` §3/§4 |
 | `PARITY.md` | v1↔v2 对拍手册 | **对拍已收官**（2026-07-17）。判例已进 DEVLOG §2.3；取数口径"必带 `now=00:00`"这条常识已进 OPERATIONS §5.1 |
-| `PHONE-FEASIBILITY.md` | V12 前置能力门禁 | **P1–P7 全过**（2026-07-16）。⚠️ 注意本文的「实测记录」栏**从未回填**，是空模板；真正的实测结果在 `KERNEL.md` §7 的冻结表与 `CHANNELS.md` §6 台账 |
 | `RENAME-V0.7.md` | v0.7 改名迁移清单 | 服务端已完成（代码里全是 GateFix-/GateDyn-）。**手机端预建闹钟改名对照表仍有用** → OPERATIONS §3 C7 指向本文 |
 | `GUARDS-AND-PARITY.md` | 守卫泛化设计 + v1→v2 能力对等审计 | §1 守卫结构**已被 `DEVICE-ABSTRACTION.md` 取代**（该文自己头部就声明了）；§3 多语言已定案并落 PHONE.md；⚠️ **§2 能力对等审计表仍有价值** —— HANDOFF §2 第 10 条引用它作为"大版本迁移必做清点"的范例 |
 
@@ -46,4 +45,5 @@
 | `V12-ADDENDUM.md` | **坐标翻译已直接应用到 `TODO-CHANNEL.md` 正文** —— 补丁文件是纯文档债，翻译完就该消失 |
 | `DEPLOY-V12.md`（仓库根） | 并入 `OPERATIONS.md` |
 | `_RECREATE_NOTE.txt` | 早已失效（所述四份文件除 calendar-api 那份外均已入库） |
+| `PHONE-FEASIBILITY.md` | **含一条已被证伪的结论**（P4 断言 Set Focus 不吃变量 → 2026-07-17 被 v1 PHONE.md 证伪，见 DEVLOG §1.9），且「实测记录」栏从未回填。真结果在 `KERNEL.md` §7 冻结表与 `CHANNELS.md` §6 台账；P7 的"自定义专注零维护"洞见已收进 KERNEL §7。**留着是陷阱，故删不归档** |
 | `PHONE-V2.md` | 改名为 `PHONE.md`（v1 那份已归档，不再需要 -V2 后缀消歧） |
