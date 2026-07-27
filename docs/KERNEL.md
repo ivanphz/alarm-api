@@ -1,6 +1,19 @@
 # KERNEL.md — alarm-api 内核契约（宪法层）
 
-> 状态: **v0.7 定稿**（2026-07 冻结批次）
+> 状态: **v0.8**（2026-07-27 结构冻结批次）
+>
+> **v0.8 相对 v0.7 的变化**（服务端结构冻结，信封形状已对手机端定稿）:
+> ① **v1 整条下线**，`/v2` 前缀降为可选（`/state` ≡ `/v2/state`）；`V2.DEFAULT` 退休
+> ② **信封零裸布尔**：真值一律 `"true"`/`"false"` 字符串（iOS 会把布尔本地化成「是/Yes」）
+> ③ **point 与 segment 键集完全相同**；`current_state` 退休；`changes` 收进 `?debug=1`
+> ④ **`i18n` 节删除** → `resolve` 节（表名 = 守卫 `source` 名）；守卫预展开 `match[]`
+> ⑤ **`reconcile_alarms` 退休**（对账幂等，每轮都做）；新增 **`alarms.sweep`** 授权位
+> ⑥ 新增 `?apply=enforce`（强制推平）· `?platform=` · `GUARDS_ALWAYS`
+> ⑦ **插件自声明 `feeds`**，内核不再持有任何插件名单（契约破口修复）
+> ⑧ **全部配置迁入 config 文件**（V2 段从 `edge/router.js` 移入 `config.default.js`）
+> ⑨ cadence 泛化；关闭的任务**整体缺席**（不发 `value:null`）
+>
+> ⬅️ **下一步：规则表重构**（`RULE-TABLE.md`）。届时 §5 五旋钮与 §19 部分内容将被取代。
 > 本文档是单一真相源。修改本文档 = 修改宪法，需在 DEVLOG 记录理由。
 >
 > **v0.7 相对 v0.6 的变化**: ① 命名明确性纲领入 §2；② focus 值键 `mode`→`preset`；
@@ -114,6 +127,10 @@ export default {
 
 ## 5. 字段订阅五旋钮 与 v2 字段清单
 
+> ⚠️ **本节将被 `RULE-TABLE.md` 取代**（规则表 + 日型原子化）。五旋钮
+> `USE/MAP/SKIP/OWN/APPLY` 写不出"13:29 仅工作日归零"这类需求（`OWN` 缺日型条件），
+> 且可读性差。**重构完成前以本节为准，完成后本节整体退役。**
+
 ```
 FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
 ```
@@ -161,11 +178,18 @@ FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
 5. 动手成功 → 更新 last_applied。
 6. alarms: diff 对账，`reconcile_alarms` 提示时全量。
 
-## 8. 路由与迁移【已裁决】
+## 8. 路由（v1 已下线 2026-07-27）
 
-- `/v1/*`: 旧逻辑**冻结**（薄适配层包住 v1-legacy.js 流程，只修 bug 不进化）。
-- `/v2/*`: 新内核（本契约全部生效，含破坏性命名）。
-- 默认路径指向由 config 开关 `V2.DEFAULT` **手动控制**；全部迁移后默认切 v2，v1 择日下线。
+**`/v2` 前缀可选**——v1 下线后它已无区分作用：
+
+| 路径 | 等价写法 | 说明 |
+|---|---|---|
+| `/state` | `/v2/state` | 采样（`?mode=segment\|point`） |
+| `/timeline` | `/v2/timeline` | 全时间线预览/审计（debug 常开） |
+| `/fact` · `/facts` | `/v2/fact` · `/v2/facts` | 事实写入 / 调试列取 |
+| 根路径及其它 | — | 一律走 `/state` |
+
+`V2.DEFAULT` 开关随 v1 一并退休。
 
 ## 9. 事实端点
 
@@ -212,7 +236,7 @@ src/
   domain/    alarm-labels.js  grammar.js
   lib/       time.js  ics.js          ← 包形，稳定后 publish（calendar-api 是第二消费者）
   config.default.js  config.user.js  config.js（合并序: default → user → PROFILES.<device>）
-  v1-legacy.js + rules.js + rest-days.js + device-state.js + school-break.js  ← /v1 冻结路径
+  ics-parser.js                          ← ICS 解析（edge/sources.js 复用）
 ```
 
 > ⚠️ **v1 冻结路径的五个文件必须留在 src/ 根且文件名精确**，否则 Cloudflare 构建期
@@ -408,35 +432,43 @@ ctx = {
 区 token 裁决优先级: **leave > out > 底色**（同区多事件并存时）。
 产出跨度: restdays ±2 天 / presence ±1 天 / quiet 逐日（发布未裁剪，裁剪归 edge/assemble）。
 
-### 19.3 /v2 信封（契约12 实例化）
+### 19.3 信封（2026-07-27 冻结；手机端契约见 CONTRACT.md）
 
 ```json
-{ "version": "2", "generated_at": "2026-07-15 01:30", "device": "default",
-  "mode": "segment", "range": { "start": "...", "end": "..." },
+{ "version": "2", "generated_at": "2026-07-27 07:41", "device": "default",
+  "platform": "ios", "mode": "point", "range": { "start": "...", "end": "..." },
   "fields": {
-    "focus":  { "kind": "focus",  "apply": "on_change",
-                "value": { "preset": "do_not_disturb", "action": "on", "switch_to": null },
-                "guards": [ { "source": "current_focus", "op": "is", "value": "do_not_disturb" } ],
-                "from": "2026-07-14 20:55" },
-    "silent": { "kind": "scalar", "apply": "on_change", "value": "on", "from": "..." },
-    "media_volume": { "kind": "scalar", "apply": "on_change", "value": 0, "from": "..." }
+    "focus":  { "kind": "focus", "apply": "on_change",
+                "value": { "preset": "sleep", "action": "off", "switch_to": null },
+                "from": "2026-07-27 07:40",
+                "guards": [ { "source": "current_focus", "op": "in",
+                              "value": ["sleep"], "match": ["睡眠", "Sleep"] } ] },
+    "silent":       { "kind": "scalar", "apply": "on_change", "value": "off", "from": "..." },
+    "media_volume": { "kind": "scalar", "apply": "enforce",  "value": 0,     "from": "..." }
   },
-  "alarms": {
-    "window": { "start": "2026-07-15 20:01", "end": "2026-07-16 20:00" },
-    "fixed":  [ { "label": "GateFix-...", "action": "on|off", "scheduled_at": "06:25", "kind": "fixed|class" } ],
-    "dynamic":[ { "label": "GateDyn-...", "at": "YYYY-MM-DD HH:MM", "reason": "..." } ]
-  },
-  "reconcile_alarms": true,
-  "i18n": { "focus_name_to_token": {...}, "focus_token_to_name": {...} },
-  "trace": ["[info] quiet/published: 2 段", "..."] }
+  "alarms": { "window": {...}, "sweep": "true", "fixed": [...], "dynamic": [...] },
+  "resolve": { "current_focus": {...}, "app": {...}, "locked": {"true":["true"],"false":["false"]} },
+  "trace": [ "[info] router/params: 收到参数[5]: ...", "..." ] }
 ```
 
-- **point 模式**: 每字段以 `changes: [{at, value, previous}]` 替代 value/from，
-  另附 `current_state` 时刻优先投影。
-- **故障降级信封**: `error:"internal_degraded"` + fields 空 + reconcile false + HTTP **200**
-  （**为什么 200 不是 500**: 手机端 fetch 拿到 500 会让整条同步失效；200 + 空状态让手机
-  "安全地什么都不做"）。
-- **窗口语义**: v2 = `(at+1分, at+24h]`，分钟平面排除当前分钟。
+**五条硬性质**（改动前先读 `CONTRACT.md` 的四条形状法则）：
+
+1. **point 与 segment 键集完全相同** —— 手机端读法恒定 `fields.<x>.value` + `.guards`，
+   刺客与轮询共用同一批指令。`changes[]` 仅 `?debug=1` 下发。
+2. **缺席 ≠ null** —— 字段不出现 = 此刻无指令（什么都不做）；`value: null` = 显式释放主张
+   （手机端删 `last_applied`）。point 模式下未命中边界的字段整个缺席。
+3. **零裸布尔** —— 真值一律 `"true"`/`"false"` 字符串（iOS 把 boolean 渲染成「是/Yes」，
+   随语言漂移）。有一条全量扫描测试守着，新字段无法绕过。
+4. **守卫预展开** —— `guards[].match[]` 是服务端按 `?platform=`/`?locales=` 展开好的
+   本机比较集合；`value[]` 保留语义 token 供排查。手机端直接精确相等，不查表。
+5. **`alarms.sweep` 是破坏性操作的授权位** —— `"true"` 才允许手机执行 sweep。
+   降级信封或任一闹钟源失败时为 `"false"`（只加不关）。手机端判 `is true`，两侧 fail-closed。
+
+**已退休**：`reconcile_alarms`（对账幂等，每轮都做）· `current_state`（值只有一个来源）·
+`i18n` 节（与 `resolve` 是同一份数据的两种形状）。
+
+**降级信封**：`error:"internal_degraded"` + `fields:{}` + `alarms.sweep:"false"` + HTTP **200**
+（200 而非 500：手机拿到 500 会让整条同步失效；200 + 空状态让它安全地什么都不做）。
 
 ### 19.4 事实记录
 
@@ -448,14 +480,18 @@ ctx = {
 
 ### 19.5 端点与参数总表
 
-| 端点 | 方法 | 说明 |
+| 端点（`/v2` 前缀可选） | 方法 | 说明 |
 |---|---|---|
-| `/v2/state` | GET | 采样（`?mode=segment\|point`，默认 segment） |
-| `/v2/timeline` | GET | 全时间线预览/审计（debug 常开: schedules + field_timelines） |
-| `/v2/fact` | POST | 写事实 |
-| `/v2/facts?stream=` | GET | 调试列取 |
-| `/v1/*` | GET | 冻结适配层（剥前缀转交 legacy） |
-| 根路径 | GET | 由 `V2.DEFAULT` 手控（false=legacy，true=/v2/state） |
+| `/state` | GET | 采样（`?mode=segment\|point`，默认 segment） |
+| `/timeline` | GET | 全时间线预览/审计（debug 常开: schedules + field_timelines） |
+| `/fact` | POST | 写事实 |
+| `/facts?stream=` | GET | 调试列取 |
+| `/schema` | GET | ⬅ **待建**（RULE-TABLE §8）：原子/算子/字段/时刻的元数据，驱动 GUI |
+| 根路径及其它 | GET | 一律走 `/state` |
 
-参数: `?key=`（鉴权，另支持 `X-Gateway-Key` / `Bearer`）· `?date=YYYY-MM-DD`（锚日，任意日期预览）
-· `?now=HH:MM` · `?mode=` · `?device=` · `?locales=zh,en` · `?debug=1` · `?testEvents=` · `?skipCalendar=1`
+参数: `?key=`（鉴权，另支持 `X-Gateway-Key` / `Bearer`）· `?date=YYYY-MM-DD`（锚日）
+· `?now=HH:MM` · `?mode=` · `?device=` · `?locales=zh,en` · `?platform=ios`
+· **`?apply=enforce`**（强制推平全部字段）· `?debug=1` · `?testEvents=` · `?skipCalendar=1`
+
+> 💡 trace 里的 `router/params` 会回显**服务端实际收到的参数**——
+> URL 混进不可见字符会污染参数名（实案：`locales` 收不到 → 专注开不起来），一眼可查。

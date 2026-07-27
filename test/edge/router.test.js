@@ -27,7 +27,7 @@ test("e2e: 鉴权关闭时段采样，信封齐全（AUTH_DISABLED=true 来自 c
   const body = await res.json();
   assert.equal(body.version, "2");
   assert.equal(body.fields.silent.value, "on");                 // 正典: 昨夜静音延续
-  assert.equal(body.fields.focus.value.preset, "do_not_disturb"); // token，永无本地化名
+  assert.equal(body.fields.focus.value.preset, "sleep"); // token，永无本地化名
   assert.equal(body.fields.media_volume.value, 0);              // 订阅 quiet: 夜间安静→归零
 });
 
@@ -49,7 +49,7 @@ test("对拍回归: focus 07:40 守卫继承 + reminder 不再误报孤儿", asy
   assert.equal(b.fields.focus.value.only_if_current, undefined);
   assert.equal(b.fields.focus.value.guards, undefined);          // 不在 value 内
   assert.deepEqual(b.fields.focus.guards,                        // 在字段级
-    [{ source: "current_focus", op: "in", value: ["do_not_disturb"], match: [] }]);  // is→in 单元素
+    [{ source: "current_focus", op: "in", value: ["sleep"], match: [] }]);  // is→in 单元素
   assert.equal(b.fields.focus.value.action, "off");
   assert.ok(!b.trace.some((x) => x.includes("orphan") && x.includes("cadence_ai_claude_reminder")));
 });
@@ -63,7 +63,7 @@ test("e2e: point 模式命中 07:40 边界", async () => {
 test("resolve 下发: 表名=守卫source名; locked 恒等表恒发", async () => {
   const r1 = await handleV2(req("date=2026-07-15&locales=zh,en"), {}, "/state", fakeLoaders());
   const b1 = await r1.json();
-  assert.deepEqual(b1.resolve.current_focus.do_not_disturb, ["勿扰模式", "Do Not Disturb"]);
+  assert.deepEqual(b1.resolve.current_focus.sleep, ["睡眠", "Sleep"]);
   assert.deepEqual(b1.resolve.locked, { true: ["true"], false: ["false"] });
   assert.ok(!("i18n" in b1));                          // 旧 i18n 节已彻底删除
 

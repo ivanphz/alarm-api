@@ -18,7 +18,8 @@ test("feeds 归一化: 缺省=fields; 字符串/数组皆可", () => {
 test("闹钟名单从插件自声明导出，与旧硬编码名单等价", () => {
   const derived = schedulesFeeding(PLUGINS, "alarms");
   // 旧的 edge/assemble.js 里写死的就是这三个 —— 现在由插件自己说了算
-  assert.deepEqual(derived.sort(), ["cadence_ai_claude_reminder", "wake_alarms", "weekend_class"]);
+  // 出厂配置里 ai_claude 是关闭的 → 整体不生成插件，故不出现在闹钟名单里
+  assert.deepEqual(derived.sort(), ["wake_alarms", "weekend_class"]);
   assert.deepEqual(schedulesFeeding(PLUGINS, "todos"), []);        // 尚无 todo 插件
   assert.ok(schedulesFeeding(PLUGINS, "plugins").includes("restdays"));  // 事实类
 });

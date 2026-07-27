@@ -82,10 +82,11 @@ id = "<namespace id>"
 
 ## 4. 冒烟测试（上线当天验一遍）
 
-- [ ] **D1** 老路径回归：打开原地址（不带前缀）→ 响应应与部署前**完全一致**（默认仍走 v1）。
-- [ ] **D2** `/v1/…` 前缀路径 → 同上一致（剥前缀适配层）。
+- [ ] **D1** 裸路径与带前缀等价：`/state` 与 `/v2/state`、`/timeline` 与 `/v2/timeline` 输出一致。
+- [ ] **D2** 看 trace 里的 `router/params` 回显，确认 locales/platform 等参数**服务端确实收到**
+      （URL 混进不可见字符会污染参数名，症状是专注开不起来，见 PHONE.md 坑表）。
 - [ ] **D3** `/v2/state?key=…&locales=zh,en&platform=ios` → 新信封（`version:"2"`，
-      fields + alarms + resolve + reconcile_alarms + trace）。**`reconcile_alarms` 应是字符串 `"true"/"false"`**。
+      fields + alarms + resolve + trace）。**`alarms.sweep` 应是字符串 `"true"/"false"`**（`reconcile_alarms` 已退休）。
 - [ ] **D4** `/v2/timeline?key=…&date=<明天>&now=00:00` → 带 schedules 与 field_timelines 的内脏视图。
 - [ ] **D5** 手机手动跑一次各 Apply\*（前台）→ 专注/静音/音量按预期变化。
 - [ ] **D6** 真实等一个刺客时刻**后台自动触发** → 用 Append-to-Note 探针确认后台也生效
@@ -124,12 +125,11 @@ id = "<namespace id>"
 **为什么 200 不是 500**：手机端 fetch 拿到 500 会让整条同步失效；200 + 空状态让手机
 "安全地什么都不做"（契约9 fail-closed）。看到这个信封就去看 `detail` 与 `trace`。
 
-### 5.4 构建失败：`Could not resolve ./v1-legacy.js`
+### 5.4 构建失败：`Could not resolve ...`
 
-/v1 冻结路径需要**五个文件**在 `src/` 根且文件名精确：
-`v1-legacy.js`、`rules.js`、`rest-days.js`、`device-state.js`、`school-break.js`。
-缺任一 → Cloudflare 构建期（解析全部 import）失败。
-**单测不会暴露此问题**——用例只 import v2 的 router/plugins，永不走 legacy 分支。
+v1 那批文件已于 2026-07-27 全部删除，此类报错现在只可能来自**真正缺失的文件**。
+交付前跑"从入口全图解析"校验（§6.6）：从 `src/index.js` 递归解析全部 import。
+**当前基线：24 个本地文件可达。**
 
 ---
 
@@ -145,12 +145,9 @@ id = "<namespace id>"
 
 ---
 
-## 7. 收口（v1 下线）
+## 7. 收口（✅ 已完成 2026-07-27）
 
-手机端全部改读 `/v2` 且稳定运行数日后：
-
-1. `config.user.js` 加 `V2: { DEFAULT: true }` → 根路径切 v2。
-2. 再稳定观察一段时间。
-3. v1 择日下线：删 `v1-legacy.js` + `rules.js` + `device-state.js` + `rest-days.js`
-   + `school-break.js`（根目录那份）。
-   ⚠️ **`ics-parser.js` 与 `time-utils.js` 仍被 v2 复用，先留。**
+v1 已下线：`v1-legacy.js` / `rules.js` / `rest-days.js` / `device-state.js` /
+`school-break.js`（根目录那份）/ `time-utils.js` 全部删除。
+`ics-parser.js` 保留（`edge/sources.js` 仍在用）。
+`index.js` 现在剥可选 `/v2` 前缀，根路径直接走 `/state`；`V2.DEFAULT` 开关一并退休。

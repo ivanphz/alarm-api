@@ -6,6 +6,7 @@ import { schedulesFeeding } from "../../src/kernel/registry.js";
 import { addDays } from "../../src/kernel/intervals.js";
 import { CONFIG } from "../../src/config.js";
 
+const prevV2 = CONFIG.V2;
 const TASKS = {
   ai_claude:  { enabled: true, kind: "rolling_cooldown", cooldown_minutes: 300,
                 channel: "alarm", title: "AI额度" },
@@ -46,16 +47,23 @@ test("加一个任务 = 只加配置: 插件/字段/事实流/闹钟全部自动
     { KIND: "scalar", USE: "cadence_game_chest", APPLY: "on_change", OWN: {} });
 });
 
-test("插件集合与 enabled 解耦: 关掉任务不会让 schedule 凭空消失", () => {
+test("★关闭的任务【整体缺席】: 不生成插件、不派生字段、不发 value:null", () => {
   const off = { CADENCE: { TASKS: { ai_claude: { ...TASKS.ai_claude, enabled: false } } } };
   const names = buildPlugins(off).map((p) => p.name);
-  assert.ok(names.includes("cadence_ai_claude"));           // 仍注册
-  assert.ok(names.includes("cadence_ai_claude_reminder"));  // 仍注册，只是产出为空
+  assert.ok(!names.includes("cadence_ai_claude"));           // 插件不注册
+  assert.ok(!names.includes("cadence_ai_claude_reminder"));  // 提醒插件也不注册
+  assert.deepEqual(withCadenceFields({}, off), {});          // 字段不派生
+
+  // ★ 为什么不能"注册但产出 null"：null 在契约里 = 显式释放主张 →
+  //   手机端【删除 last_applied】。而"任务被关闭"应当是【缺席】= 什么都不做。两者动作相反。
+  const on = { CADENCE: { TASKS: TASKS } };
+  assert.ok(buildPlugins(on).map((p) => p.name).includes("cadence_ai_claude"));
+  assert.ok(withCadenceFields({}, on)["cadence.ai_claude"]);
 });
 
 test("e2e 多任务: 两个任务各自独立冷却，字段用扁平键 cadence.<task>", async () => {
   const prev = CONFIG.V2;
-  CONFIG.V2 = { CADENCE: { TASKS } };
+  CONFIG.V2 = { ...prevV2, CADENCE: { TASKS } };   // 展开合并，别整体替换
   try {
     const ld = loaders({
       ai_claude:  [{ at: "2026-07-15 09:00", id: "a1", type: "done" }],   // +300min → 14:00
@@ -78,7 +86,7 @@ test("e2e 多任务: 两个任务各自独立冷却，字段用扁平键 cadence
 
 test("未知 kind 响亮报错，绝不静默降级", async () => {
   const prev = CONFIG.V2;
-  CONFIG.V2 = { CADENCE: { TASKS: { weird: { enabled: true, kind: "ladder", channel: "alarm" } } } };
+  CONFIG.V2 = { ...prev, CADENCE: { TASKS: { weird: { enabled: true, kind: "ladder", channel: "alarm" } } } };
   try {
     const b = await call("date=2026-07-15&now=12:00", loaders({ weird: [] }));
     assert.equal(b.fields["cadence.weird"].value, null);          // 无主张（不编造）
@@ -88,7 +96,7 @@ test("未知 kind 响亮报错，绝不静默降级", async () => {
 
 test("channel 未建成时响亮告警（配了 todo 不会被静默当成生效）", async () => {
   const prev = CONFIG.V2;
-  CONFIG.V2 = { CADENCE: { TASKS: { x: { enabled: true, kind: "rolling_cooldown", channel: "todo" } } } };
+  CONFIG.V2 = { ...prev, CADENCE: { TASKS: { x: { enabled: true, kind: "rolling_cooldown", channel: "todo" } } } };
   try {
     const b = await call("date=2026-07-15&now=12:00", loaders({ x: [] }));
     assert.ok(b.trace.some((t) => t.includes("channel_not_built") && t.includes("todo")));

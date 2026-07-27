@@ -1,19 +1,37 @@
 /**
  * ==============================================================================
- * 🧑 config.user.js — 你的个人配置层（纯增量：只写和默认不同的项）
+ * 🎛 config.user.js — 你的个人配置（只写和出厂默认【不同】的项）
  * ==============================================================================
+ * 合并规则（config.js 的 deepMerge）:
+ *   · 对象 → 逐层深合并（只写想改的那一个叶子，其余全部继承 config.default.js）
+ *   · 数组 → 整段替换（要改就写全）
  *
- * 合并规则(config.js deepMerge):
- *   · 对象 → 逐层深合并: 只写想改的字段, 其余自动继承 config.default.js
- *   · 数组 → 整段替换:   要改数组就写全(便于删除某项)
- *   · 想恢复某项默认 →  从本文件删掉该项即可自动回落
+ * ⭐ 规则/字段/守卫都在 config.default.js 的 V2 段，本文件按同样路径覆盖即可。
  *
- * 这个文件 = 你与出厂设置的全部差异, 一眼看尽。默认层升级会自动流到你身上;
- * 想"钉死"某个值不随默认层变, 就把它显式写进这里。
+ * 常见改法（复制取消注释）:
  *
- * ⚠️ V11 结构: DEVICE 下的 FOCUS/SILENT/MEDIA_VOLUME 三节已合并为 DEVICE.FIELDS,
- *   每个字段用 USE 订阅命名规则(见 config.default.js FIELDS 注释)。旧 GUARD["07:40"]
- *   现为 FIELDS.focus.OWN["07:40"].only_if_current, 语义不变。
+ *   ① 换夜间专注模式:
+ *      V2: { FIELDS: { focus: { PRESET: "do_not_disturb" } } }
+ *
+ *   ② 改守卫（只动一个时刻，其余继承）:
+ *      V2: { FIELDS: { focus: { OWN: { "07:40": { only_if_current: "do_not_disturb" } } } } }
+ *      去掉某个时刻的守卫 → 写 { only_if_current: null }
+ *      要多值守卫 → 用完整语法:
+ *        OWN: { "07:40": { guards: [{ source:"current_focus", op:"in",
+ *                                     value:["sleep","do_not_disturb"] }] } }
+ *
+ *   ③ 音量恒常守卫（导航/视频/音乐前台时不归零）:
+ *      V2: { FIELDS: { media_volume: {
+ *              GUARDS_ALWAYS: [{ source:"app", op:"not_in", value:["maps","video","music"] }] } } }
+ *
+ *   ④ 强制每轮重申（不给手动覆盖留空间）:
+ *      V2: { FIELDS: { media_volume: { APPLY: "enforce" } } }
+ *
+ *   ⑤ 开启周期任务:
+ *      V2: { CADENCE: { TASKS: { ai_claude: { enabled: true } } } }
+ *
+ *   ⑥ 改安静时刻表: DND: { NIGHT_ON_WORKDAY_EVE: "21:30" }
+ *      ⚠️ 新增时刻必须同时加进 DND.WHITELIST，并在手机上建对应的边界刺客自动化
  * ==============================================================================
  */
 
@@ -28,17 +46,6 @@ export const USER_CONFIG = {
     MORNING: { end: "08:30" }
   },
 
-  DEVICE: {
-    FIELDS: {
-      focus: {
-        OWN: {
-          // 早间解除守卫: 07:40 的规则动作(OFF)仅当手机当前正处于 DND 才执行,
-          // 不误伤手动开启的 Sleep/Work。周末规则不产出 07:40 → 此守卫自然休眠。
-          "07:40": { only_if_current: "Do Not Disturb" }
-        }
-      }
-    }
-  },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 📎 写法示范（需要时把某段拷到上面 USER_CONFIG 里，删掉注释即可生效）

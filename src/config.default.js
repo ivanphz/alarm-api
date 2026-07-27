@@ -20,11 +20,6 @@ export const DEFAULT_CONFIG = {
   // ───────────────────────────────────────────────────────────────────────────
   // 系统基础
   // ───────────────────────────────────────────────────────────────────────────
-  SYSTEM: {
-    TIMEZONE: "Asia/Shanghai",
-    WINDOW_START_DELAY_SECONDS: 15,   // 死区滤波: 窗口起点 = now+15s，防整点触发把"当前这分钟"误判为未来
-    WINDOW_END_BUFFER_SECONDS: 15     // 前瞻冗余: 窗口终点 = now+24h+15s，吞噬网络时差
-  },
 
   // ───────────────────────────────────────────────────────────────────────────
   // 🔐 鉴权密钥【不在本文件里】—— 存 GATEWAY_KEY（Secret 或明文 vars 皆可）
@@ -107,13 +102,6 @@ export const DEFAULT_CONFIG = {
   },
 
   // 晨间闹钟组（被 LEAVE / WORK_EVENT 晨间碰撞时统一关闭的固定 Label 集合）
-  MORNING_LABELS: [
-    "GateFix-Workday-WakeUp-Vib",
-    "GateFix-Workday-WakeUp-Ring",
-    "GateFix-FirstWorkday-WakeUp-Ring",
-    "GateFix-SchoolBreak-WakeUp-Vib",
-    "GateFix-SchoolBreak-WakeUp-Ring"
-  ],
 
   // ───────────────────────────────────────────────────────────────────────────
   // 动态闹钟（脚本新建，系统默认样式，无法自定义铃声/震动）
@@ -231,71 +219,6 @@ export const DEFAULT_CONFIG = {
   //           → 手机重启/手动跑一次 = 恢复当前应有的完整状态(手动同步模式)
   // 加新字段: device-state.js 的 FIELD_REGISTRY 加一行 + 这里加一节 + 手机加 ApplyXxx。
   // ───────────────────────────────────────────────────────────────────────────
-  DEVICE: {
-    // 默认匹配模式: "point"(时点) 或 "segment"(时段)。URL ?mode=point|segment 随时覆盖。
-    STATE_MODE_DEFAULT: "point",
-
-    // 时点模式容差(分钟, 前后独立): 键已过去多少分钟内仍算命中 / 键还有多少分钟到也算命中
-    POINT: { PAST_TOLERANCE_MIN: 3, FUTURE_TOLERANCE_MIN: 3 },
-
-    // 时段模式: LOOKBACK_HOURS 回溯窗口(26h保证跨过昨晚) / FUTURE_SNAP_MIN 向前吸附(分钟)
-    //           SYNC_ALARMS: 时段模式(状态重建)是否顺带跑一次闹钟对账(建议true)
-    SEGMENT: { LOOKBACK_HOURS: 26, FUTURE_SNAP_MIN: 0, SYNC_ALARMS: true },
-
-    // ── 字段注册表 FIELDS —— 每个字段声明: 订阅哪张规则 + 怎么微调 + 输出形态 ──
-    //
-    //   规则(schedule)由引擎产出、命名(见 device-state.js SCHEDULE_NAMES, 当前只有 "dnd")。
-    //   字段用四个正交旋钮描述自己, 彼此零依赖(删任一字段不影响其它):
-    //     KIND   "focus"=输出 focus 对象(带 mode/守卫/switch_to); "scalar"=输出标量或 null
-    //     USE    订阅哪张规则名; null=不订阅, 只吃自己的 OWN
-    //     MAP    规则值→本字段值 的映射(缺省恒等); 例 { ON:"ON", OFF:"OFF" }
-    //     SKIP   复用规则但屏蔽这些时刻; 例 silent 不碰午间 12:15/13:29
-    //     OWN    本字段独立时刻(最高优先级, 叠加/覆盖规则; 支持 falsy 0/空串)
-    //            focus 的 OWN 见下方写法; scalar 的 OWN 值就是最终标量
-    //
-    //   👉 silent 与 focus 都 USE "dnd" = 复用同一张规则, 但互不依赖:
-    //      删掉 focus 整节, silent 仍从 dnd 正常渲染。想让某字段独立→改它的 USE。
-    //      没有字段 USE 某规则时, 审计日志会把它标为孤儿(可删)。
-    FIELDS: {
-
-      // focus(勿扰/专注): 订阅 dnd, 渲染成 focus 对象。MODE_NAME 必须是 iOS 真实 focus 名。
-      //   OWN 写法(每时刻定制的唯一入口, 逐字段与规则合并):
-      //     "22:00": "ON"                                  简写: 独立时刻直接开/关
-      //     "07:40": { only_if_current: "Do Not Disturb" } 给规则动作挂守卫(action 继承规则)
-      //     "23:30": { mode: "Sleep", action: "ON" }       独立时刻开别的 focus
-      //     "13:29": { action: null }                      压制该时刻的规则动作(这个点闭嘴)
-      //     "08:00": { action: "OFF", switch_to: "" }      预留: 清场语义(手机端识别 switch_to)
-      focus: {
-        KIND: "focus",
-        USE: "dnd",
-        MODE_NAME: "Do Not Disturb",
-        OWN: {}
-      },
-
-      // silent(静音): 复用 dnd(与 focus 无关), 屏蔽午间。想解耦→USE 改别的规则或 null。
-      //   MAP 缺省恒等(ON→静音开, OFF→静音关)。OWN: { "05:00": "ON" } 可任意时刻独立开关。
-      silent: {
-        KIND: "scalar",
-        USE: "dnd",
-        SKIP: ["12:15", "13:29"],
-        OWN: {}
-      },
-
-      // media_volume(媒体音量): 不订阅任何规则(USE:null), 完全独立, 只吃 OWN。
-      //   值域 0~1(手机端 Set Volume 按分数)。这些时刻归零, 想加时刻直接在 OWN 加一行。
-      media_volume: {
-        KIND: "scalar",
-        USE: null,
-        OWN: { "07:40": 0, "12:15": 0, "13:29": 0, "20:55": 0 }
-      }
-    },
-
-    // ── 闹钟同步锚点 —— 特殊者(闹钟是前瞻性的,与即时状态不同) ────────────────
-    //   这些时刻 sync_alarms:true,刺客读到就跑一次 SyncAlarms 对账。每天雷打不动。
-    SYNC_ALARMS: {
-      KEYS: ["07:40", "13:29", "22:25"]
-    }
-  },
 
   // ───────────────────────────────────────────────────────────────────────────
   // 外部闹钟源 EXTERNAL_ALARMS —— 乙方项目算好的【具体闹钟点】→ 手机闹钟
@@ -378,5 +301,75 @@ export const DEFAULT_CONFIG = {
   // 长休阈值: 连续休息块 ≥ 此天数 → 视为长假
   // 触发: ①周末上课跳课 ②早间 DND 解除键不输出(全手动，绝不吵醒)
   // 普通双休 = 2 天，永不触发
+  // ══════════════════════════════════════════════════════════════════════════
+  // V2 内核配置 —— ⭐ 【字段/守卫/apply 都在这里】
+  // ══════════════════════════════════════════════════════════════════════════
+  // 2026-07-27 从 edge/router.js 迁入。此前它藏在代码里，导致"改规则不知道去哪改"。
+  // 现在【所有旋钮都在 config 文件】，且经 config.js 的 deepMerge 逐层合并——
+  // config.user.js 里只写想改的那一个叶子，其余全部继承本文件。
+  V2: {
+    DEFAULT: false,                       // true = 根路径默认走 v2（迁移完成后手动翻转）
+    FIELDS: {
+      focus: {
+        KIND: "focus", USE: "quiet", APPLY: "on_change",
+        PRESET: "sleep",             // ★ 夜间开启的专注模式（token，不是显示名）
+                                     //   token→本机名候选表在 edge/resolve.js，按 ?locales= 下发
+        // ── 时点作用域守卫：只在这些边界生效（恒常守卫写 GUARDS_ALWAYS）──
+        //    语义：只有【当前确实是 sleep】才动 focus。
+        //    保护的是"你手动开了别的专注（工作/驾驶/自定义）"这种情况 —— 不该被早间解除误杀（契约3）。
+        //    only_if_current 是单值语法糖，服务端翻译成
+        //      { source:"current_focus", op:"in", value:["sleep"], match:[本机名...] }
+        //    要多值就直接写完整语法：guards: [{source:"current_focus", op:"in", value:["sleep","do_not_disturb"]}]
+        OWN: {
+          "07:40": { only_if_current: "sleep" },   // 工作日早间解除
+          "09:30": { only_if_current: "sleep" },   // 周末早间解除
+        },
+      },
+      silent: { KIND: "scalar", USE: "quiet", SKIP: ["12:15", "13:29"], APPLY: "on_change", OWN: {} },
+      media_volume: {
+        KIND: "scalar", USE: "quiet", APPLY: "on_change",
+        MAP: { on: 0, off: null },   // 该安静→归零(每次进入重申); 解除→无主张(白天音量归人管)
+        OWN: {},                     // 单位: 整数 0–100（契约§5）。契约15: 订阅声明取代抄数字
+        // 【恒常作用域守卫】整个字段永远适用(时点守卫写在 OWN 的值内)。取消注释即启用:
+        //   导航/视频/音乐 App 前台时不归零音量 —— 值是【语义 token】, 绝不写包名,
+        //   token→本平台标识的解析表在 edge/resolve.js, 按 ?platform= 下发(契约: 零平台字符串)
+        // GUARDS_ALWAYS: [{ source: "app", op: "not_in", value: ["maps", "video", "music"] }],
+      },
+      // cadence.<task> 字段由 CADENCE.TASKS 自动派生（见 withCadenceFields），此处不写死
+    },
+    // 设备自报平台（?platform=）缺省值。服务端【不维护】"哪台设备是什么平台"的注册表——
+    // 设备自报家门，新设备接入零配置（DEVICE-ABSTRACTION §4.1）。
+    DEFAULT_PLATFORM: "ios",
+    // 能力声明：⚠️【只留形状，不实现】。iOS 全链路跑通前不写任何按平台裁剪字段的逻辑，
+    // 避免过早抽象（DEVICE-ABSTRACTION §4.2 与不变量8）。安卓的真实差异（无 Focus 模型、
+    // 四路音量）无法用解析表翻译，只能声明——到时在此填，并按此只下发该平台支持的字段。
+    PLATFORMS: {
+      ios:     { fields: ["focus", "silent", "media_volume"] },
+      android: { fields: ["silent", "volume_media", "volume_ring"] },   // 形状示意，未启用
+    },
+    POINT: { PAST_TOLERANCE_MIN: 3, FUTURE_TOLERANCE_MIN: 3 },
+    // ── 周期任务（KERNEL §10）。加一个任务 = 这里加一节【纯配置】，代码零改动。──
+    //    每个任务自动获得: schedule cadence_<task> + 字段 cadence.<task>
+    //                     + 提醒闹钟 GateDyn-CAD-<task>-<HHMM>（channel:"alarm" 时）
+    //    kind 已实现: rolling_cooldown。其余（ladder 等）等真有任务时再写，未知 kind 响亮报错。
+    CADENCE: {
+      TASKS: {
+        ai_claude: {
+          enabled: false,                      // config.user.js 里设 true 开启
+          kind: "rolling_cooldown",
+          stream: "ai_claude",                 // 事实流名（缺省 = 任务名）
+          cooldown_minutes: 300,               // 5 小时滚动冷却
+          weekly_reset: { day: 1, time: "08:00" },  // 周一 08:00 回满（day: 0=周日…6=周六）
+          channel: "alarm",                    // alarm(已建成) | todo | notification(未建成)
+          reminder: true,                      // 恢复时刻建提醒闹钟
+          title: "AI额度",                     // 提醒文案
+        },
+        // 示例（复制改名即可，无需动代码）:
+        // game_chest: { enabled: true, kind: "rolling_cooldown", cooldown_minutes: 420,
+        //               channel: "alarm", title: "宝箱" },
+      },
+    },
+  },
+
   LONG_REST_DAYS: 3
 };

@@ -32,10 +32,10 @@
 
 | 项 | 状态 |
 |---|---|
-| 架构 | **V12 插件化内核**，双轨: `/v1` 冻结（只修 bug）· `/v2` 现役 |
-| 测试 | `node --test` **98 用例全绿** |
+| 架构 | **V12 插件化内核**（v1 已于 2026-07-27 下线，v2 为唯一路径） |
+| 测试 | `node --test` **102 用例全绿** |
 | 手机端 | **待装配**——服务端契约已冻结，照 `docs/PHONE.md` v4.3 从头搭一次 |
-| 默认路由 | 仍指 v1（`config.user.js` 设 `V2:{DEFAULT:true}` 后翻转） |
+| 路由 | **`/v2` 前缀可选**：`/state` 与 `/v2/state` 等价（v1 下线后前缀已无区分作用） |
 | 下一步 | **部署 → 装配手机端 → 真机 debug**（契约见 `docs/CONTRACT.md`） |
 
 ---
@@ -46,7 +46,7 @@
 alarm-api/
 ├── README.md                    ← 你在这（总入口 / 地图）
 ├── src/
-│   ├── index.js           (41)  双轨入口: /v1 剥前缀转 legacy · /v2 转 router
+│   ├── index.js           (24)  入口: 剥可选 /v2 前缀 → /state | /timeline | /fact
 │   ├── kernel/                  ← 内核（业务语义零知识；改这里 = 你选错了层）
 │   │   ├── intervals.js  (180)  区间代数: 归一化/合并/叠加/采样（零依赖，先有测试后有消费者）
 │   │   ├── registry.js   (100)  插件加载 → deps 拓扑排序 → 校验 → 发布 → trace
@@ -71,13 +71,13 @@ alarm-api/
 │   │   ├── alarm-labels.js (59) ★ Gate 标签唯一构造点（语法冻结，见 KERNEL §12）
 │   │   └── grammar.js     (56)  日历标题词法 → 类型化事实
 │   ├── lib/time.js        (57)  时区/墙钟工具（稳定后提包）
-│   ├── config.default.js (382)  出厂默认（所有开关都在这，含大量就地注释）
+│   ├── config.default.js         出厂默认 —— ⭐ **所有旋钮都在这**，含 V2 段
+│   │                             （字段/守卫/apply/cadence；2026-07-27 从 router.js 迁入）
 │   ├── config.user.js    (145)  个人配置层：纯增量，只写和默认不同的项
 │   ├── config.js          (43)  合并器: default ← user 深合并
 │   ├── ics-parser.js     (110)  ICS 解析（v1/v2 共用）
-│   └── v1-legacy.js + rules.js + rest-days.js + device-state.js + school-break.js
-│                                ⚠️ /v1 冻结路径，五个文件缺一构建失败（KERNEL §11）
-├── test/                        node --test，75 用例
+│   └── ics-parser.js     (110)  ICS 解析（v2 复用；v1 那批文件已全部删除）
+├── test/                        node --test，102 用例
 ├── docs/                        文档（见下方索引）
 ├── .github/workflows/
 │   ├── deploy.yml               push main → 部署到 Cloudflare（带私有源 npm ci）
@@ -130,7 +130,8 @@ alarm-api/
 **待做（设计已定稿）**
 | 文档 | 内容 |
 |---|---|
-| `docs/DEVICE-ABSTRACTION.md` | ⬅ **下一步主任务**: 语义 token + resolve 解析表，跨平台前提 |
+| `docs/RULE-TABLE.md` | ⬅ **下一步主任务**：规则表 + 日型原子化 + `/v2/schema`（破坏性重构，手机端零改动） |
+| `docs/DEVICE-ABSTRACTION.md` | 服务端已完成: 语义 token + resolve 解析表，跨平台前提 |
 | `docs/TODO-CHANNEL.md` | todo 执行通道 + Bark 推送通道（服务端 + 手机端完整契约） |
 | `docs/FEEDBACK-SELFHEAL.md` | 手机回传 + 闹钟对账自愈（三阶段，接口形状已冻结） |
 | `docs/HORIZON.md` | 远期方向账本: 可视化/网页配置/多设备/格式嗅探（只钉形状不写码） |

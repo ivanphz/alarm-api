@@ -10,7 +10,8 @@
 
 ## 0. 三十秒定位
 
-alarm-api 已完成 V12 插件化重构（双轨: `/v1` 冻结、`/v2` 现役，**75 用例全绿**）。
+alarm-api 已完成 V12 插件化重构。**v1 已下线**（2026-07-27），v2 为唯一路径，
+`/v2` 前缀降为可选。**102 用例全绿**，服务端契约已对手机端冻结。
 你接手的是**在 /v2 上新增能力**，不是改架构。三层生态:
 `workdays-core`（事实）→ `calendar-api`（决策，另一仓库）→ **`alarm-api`（执行，本仓库）**。
 
@@ -27,8 +28,9 @@ alarm-api 已完成 V12 插件化重构（双轨: `/v1` 冻结、`/v2` 现役，
 
 ## 2. 不可违反的不变量（违反即架构损伤）
 
-1. **/v1 冻结**: `src/v1-legacy.js` 及其依赖只修 bug，绝不加功能。新能力**只进 /v2**。
-   (违反: 把新字段加进冻结轨道，将来 v1 下线时连累新功能)
+1. **信封形状冻结**: `fields.<x>` 的键集、缺席 vs null、零裸布尔、`alarms.sweep` 授权位
+   —— 改任一条都会打断已装配的手机端。改前先读 `CONTRACT.md` 四条形状法则。
+   (v1 已于 2026-07-27 下线，原"双轨"不变量退休)
 2. **插件纯函数**: `produce(ctx, range)` 禁读时钟(`Date.now()`)、禁 I/O(`fetch`)。
    所有 I/O 在 edge 层，now 只在采样端。(违反: golden 测试失效、`?date=` 预览崩)
 3. **消费者只认规则名**(契约15): 字段/下游插件只订阅 schedule 名，不碰生产者内部，
@@ -101,7 +103,8 @@ alarm-api 已完成 V12 插件化重构（双轨: `/v1` 冻结、`/v2` 现役，
 **待建（设计已定稿，只差实施）**
 | 文档 | 状态 |
 |---|---|
-| **DEVICE-ABSTRACTION.md** | ⭐ **下一步主任务**: 语义token + resolve解析表、guards两作用域、platform自报 |
+| **RULE-TABLE.md** | ⭐⭐ **下一步主任务（破坏性重构）**：规则表 + 日型原子化 + `/v2/schema`。信封形状不变、手机端零改动。**建议开新会话专做** |
+| **DEVICE-ABSTRACTION.md** | 服务端已完成: 语义token + resolve解析表、guards两作用域、platform自报 |
 | **TODO-CHANNEL.md** | todo 执行通道 + Bark 推送通道，服务端+手机端完整契约（已翻译到 v2 坐标） |
 | **FEEDBACK-SELFHEAL.md** | 回传 + 闹钟对账自愈，三阶段；接口形状已冻结 |
 | **HORIZON.md** | 远期方向账本: 可视化/网页配置/多设备/格式嗅探/术语清扫; 只钉形状不写码 |
@@ -203,7 +206,7 @@ Bark / workdays-core 等外部依赖一律经**适配器接口**接入，具体�
 
 ## 附: 当前状态锚点
 
-- KERNEL **v0.7** / **98 用例全绿** / v2 未正式切默认（服务端契约已冻结，手机端待搭）
+- KERNEL **v0.8** / **102 用例全绿** / v2 未正式切默认（服务端契约已冻结，手机端待搭）
 - **已实现**: 全部决策插件 + 字段五旋钮 + 闹钟 + 外部源 + ai_quota(cadence 特例)
   + guards(is/is_not/in/not_in, 字段级下发) + i18n 下发 + `/v2/fact` 事实流
 - **首要**: 设备抽象层重构（DEVICE-ABSTRACTION.md，设计定稿待实施）
@@ -215,4 +218,41 @@ Bark / workdays-core 等外部依赖一律经**适配器接口**接入，具体�
   ④ **信封形状冻结**：point 与 segment 键集完全相同、`current_state` 退休、
      `i18n` 删除、守卫预展开 `match[]`、**信封零裸布尔**
   ⑤ 死文件清理（`edge/fields.js` / `edge/i18n.js` / `ai-quota*.js`）
-- ⬅️ **当前状态：服务端契约已冻结，等待部署 + 手机端装配**（`docs/PHONE.md` v4.3）
+- ⬅️ **当前状态**：服务端契约冻结（102 用例全绿）· 手机端 v6.0 已搭 · v1 已下线
+- ⬅️ **下一步：规则表重构**（`docs/RULE-TABLE.md`，设计定稿待实施）
+  · 动机：现模型写不出"13:29 仅工作日归零"（`OWN` 缺日型条件），且 `USE/MAP/SKIP/OWN` 难读
+  · 形态：`(时刻, 日型) → 字段效果`；原子由插件自声明并自带 schema；`/v2/schema` 驱动 GUI
+  · **信封零变化 → 手机端零改动**；**先建 golden 快照再动代码**（RULE-TABLE §11.1）
+
+---
+
+## 附二: 未完成事项（2026-07-27 盘点）
+
+### 🔴 大工作量 —— 开新会话专做
+
+| # | 事项 | 依据 | 备注 |
+|---|---|---|---|
+| 1 | **规则表重构** | `RULE-TABLE.md` | 破坏性重构，信封不变、手机端零改动。**先建 golden 快照再动代码** |
+| 2 | todo 通道 + Bark | `TODO-CHANNEL.md` | `feeds:"todos"` 已就位，不用再加名单 |
+| 3 | 回传自愈 | `FEEDBACK-SELFHEAL.md` | 依赖 ②的 `reconcile_todos` 通道 |
+| 4 | Pages 管理前端 | `HORIZON.md` §1 | 依赖 ①的 `/v2/schema` |
+
+### 🟡 中等 —— 随相关改动顺手做
+
+| # | 事项 | 何时做 |
+|---|---|---|
+| 5 | `RULEBOOK.md` 全面重写（"改法"随规则表整个变） | 规则表重构完成后 |
+| 6 | `KERNEL.md` §5 五旋钮退役 | 同上（已在该节标注） |
+| 7 | `EXTERNAL_ALARMS` → 统一 `EXTERNAL_SOURCES` 家族 + 格式嗅探 | 做 todo 通道时一并（HORIZON §5/§6） |
+| 8 | `lib/ics` + `lib/time` 提包 publish | calendar-api 要用时 |
+| 9 | `DEVICE-ABSTRACTION.md` 转历史存档（服务端已完成，手机端已装配） | 手机端灰度收口后 |
+
+### 🟢 小 —— 待实测/待补数据
+
+| # | 事项 | 谁做 |
+|---|---|---|
+| 10 | **补齐 App bundle id**（B站/爱奇艺/腾讯视频/优酷/网易云/QQ音乐）→ `edge/resolve.js` | Ivan 实测（30 秒/个，采集法见 PHONE.md §6） |
+| 11 | `Delete` 传整个闹钟列表弹几次确认 | 搭 CleanAlarms 首日自明 |
+| 12 | `media_volume` 是否开 `enforce` | **先补齐 #10 再决定**，否则未登记的 App 会被每小时掐 |
+| 13 | 公网部署前删掉 `config.user.js` 的 `AUTH_DISABLED: true` | 部署前 |
+| 14 | 灰度收口后删掉 `SyncAll` 里的探针块 | 手机端稳定后 |

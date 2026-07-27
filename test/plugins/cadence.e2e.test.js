@@ -7,6 +7,7 @@ import { handleV2, handleFact } from "../../src/edge/router.js";
 import { addDays } from "../../src/kernel/intervals.js";
 
 // 任务纯配置（KERNEL §10）: 加任务 = 加一节，代码零改动
+const prevV2 = CONFIG.V2;
 const TASKS = {
   ai_claude: { enabled: true, kind: "rolling_cooldown", stream: "ai_claude",
                cooldown_minutes: 300, weekly_reset: { day: 1, time: "08:00" },
@@ -32,7 +33,7 @@ function loaders(factEvents, extra = {}) {
 // 经 config.user.js 无法在测试改 V2 → 用注入: handleV2 读 CONFIG.V2, 我们借 user 配置的
 // 深合并路径不可行, 改走 loaders + 环境: 直接篡改 CONFIG.V2（测试专用, 单进程安全）
 import { CONFIG } from "../../src/config.js";
-CONFIG.V2 = { CADENCE: { TASKS } };
+CONFIG.V2 = { ...prevV2, CADENCE: { TASKS } };   // 展开合并，别整体替换
 
 const call = async (qs, ld) => {
   const res = await handleV2(new Request(`https://x.dev/v2/state?${qs}`), {}, "/state", ld);
