@@ -123,6 +123,15 @@ export function buildFocusTable(localesParam) {
       if (!token_to_name[token].includes(name)) token_to_name[token].push(name);
     }
   }
+  // ── 语义 token `none` = 【当前没有任何专注】────────────────────────────────
+  // 依据: PHONE §3 G11 / §7 F24 —— `Get Current Focus` 在无专注时返回【空】。
+  // 于是"无专注"在本机的投影就是空字符串，它不随语言变（没有显示名可翻译）。
+  // 用途: 守卫写 in:["none","sleep"] = "当前没专注、或已经是睡眠，才动手" ——
+  //       手动开着别的专注时整条指令让路，不打破你的现场（KERNEL 契约3）。
+  // 为什么仍然放在 locales 分支内（而不是恒发）: 若恒发，缺 ?locales= 时
+  //   in:["none","sleep"] 会退化成"仅当无专注"且 match 非空 → 空展开告警不响 →
+  //   静默少了一半语义。放在里面则整表缺失 → match 空 → 响亮告警（fail-loud 优先）。
+  if (hit) token_to_name.none = [""];
   return hit ? token_to_name : null;
 }
 
