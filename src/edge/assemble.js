@@ -66,11 +66,25 @@ const OP_SUGAR = { is: "in", is_not: "not_in" };
 // 契约不破: value[] 保留语义 token（人读/排查/跨平台不变），match[] 只是它在本机的投影。
 // 空展开语义: token 在本平台不存在 → 不贡献成员; 整张表缺失 → match=[] →
 //   in 拦截(不可能属于空集) / not_in 通过(没有要躲的)，与手机端展开的结果完全一致。
-function expandGuard(g, resolve) {
+function expandGuard(g, resolve, trace, field) {
   const table = (resolve && resolve[g.source]) || {};
   const match = [];
   for (const tok of g.value) {
     for (const id of table[tok] || []) if (!match.includes(id)) match.push(id);
+  }
+  // ── 空展开告警（fail-loud）────────────────────────────────────────────────
+  // 空展开的【语义】是对的（in 拦不住任何东西=全拦, not_in 没什么要躲=全放），
+  // 但它对得很安静 —— 这正是 2026-07-27 实案的形状: URL 里混进不可见字符 →
+  // ?locales= 收不到 → resolve.current_focus 整表不下发 → focus 的守卫 match 全空 →
+  // 早间解除【永远拦截】→ 专注整天不解除，而 trace 里一个字都没有。
+  // 表不全 = 少保护(resolve.js 文末)是【已知可接受】的，但也要看得见，故一律告警。
+  if (match.length === 0 && trace) {
+    trace.push({ level: "warn", plugin: "guards", ref: "empty_match",
+      msg: `字段 "${field}" 的守卫 ${g.source}/${g.op} [${g.value.join(",")}] 展开为空 —— ` +
+           (g.op === "in"
+             ? "该守卫将【永远拦截】，此字段到点不会动手"
+             : "该守卫将【永远放行】，等于这层保护不存在") +
+           `；检查 URL 是否带 ?locales= / ?platform=，以及 edge/resolve.js 里有无这些 token` });
   }
   return { ...g, match };
 }
@@ -88,7 +102,11 @@ function validateGuard(g, trace) {
 }
 
 // 守卫归一化 → 返回 { value, guards }（guards 提到【字段级】，与 value 同级，三字段路径一致）。
-// only_if_current 是单守卫语法糖: 翻译成 current_focus/is 条目并入 guards、从 value 移除。
+// only_if_current 是单守卫语法糖: 翻译成 current_focus 条目并入 guards、从 value 移除。
+//   · 标量 "sleep"            → is  → 下发 in + 单元素数组
+//   · 数组 ["none","sleep"]   → in  → 下发 in + 多元素数组（"当前是这几种之一才动手"）
+// 数组以前会被 String() 压成 "none,sleep" 这一个假 token → 展开必空 → 守卫永远拦截，
+// 且（在空展开告警之前）毫无迹象。现在直接支持，不再有这个坑。
 // 手机端一律读 fields.<x>.guards，永不读 only_if_current，也不从 value 内部取 guards。
 function extractGuards(value, trace) {
   const raw = [];
@@ -96,7 +114,10 @@ function extractGuards(value, trace) {
   if (value && typeof value === "object") {
     if (Array.isArray(value.guards)) raw.push(...value.guards);
     if (value.only_if_current != null) {
-      raw.push({ source: "current_focus", op: "is", value: value.only_if_current });
+      const oic = value.only_if_current;
+      raw.push(Array.isArray(oic)
+        ? { source: "current_focus", op: "in", value: oic }        // 多值
+        : { source: "current_focus", op: "is", value: oic });      // 单值（下游糖化成 in）
     }
     const { guards: _g, only_if_current: _o, ...rest } = value;
     outValue = rest;
@@ -152,7 +173,7 @@ export function assembleState({
     }
     alwaysGuards[name] = Array.isArray(alwaysRaw)
       ? alwaysRaw.map((g) => validateGuard(g, trace)).filter(Boolean)
-                 .map((g) => expandGuard(g, resolve)) : [];
+                 .map((g) => expandGuard(g, resolve, trace, name)) : [];
 
     if (mode === "point") {
       pointChanges[name] = samplePoint(segs, at, tolerances).map((c) => {
@@ -163,7 +184,7 @@ export function assembleState({
       const seg = sampleSegment(segs, at);                   // { value, from }
       const { value, guards } = extractGuards(seg.value, trace);
       fields[name] = { ...metaOf[name], value: boolToken(value), from: seg.from };
-      const all = [...guards.map((g) => expandGuard(g, resolve)), ...alwaysGuards[name]];
+      const all = [...guards.map((g) => expandGuard(g, resolve, trace, name)), ...alwaysGuards[name]];
       if (all.length) fields[name].guards = all;
     }
   }
@@ -182,7 +203,7 @@ export function assembleState({
       const hit = best ? pointChanges[name].find((c) => c.at === best) : null;
       if (!hit) continue;                                    // 此刻无指令 → 字段缺席
       fields[name] = { ...metaOf[name], value: boolToken(hit.value), from: hit.at };
-      const all = [...(hit.guards || []).map((g) => expandGuard(g, resolve)), ...alwaysGuards[name]];
+      const all = [...(hit.guards || []).map((g) => expandGuard(g, resolve, trace, name)), ...alwaysGuards[name]];
       if (all.length) fields[name].guards = all;
       if (debug) fields[name].changes = pointChanges[name];   // 明细仅诊断用，手机端不读
     }
