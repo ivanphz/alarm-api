@@ -84,7 +84,8 @@ id = "<namespace id>"
 
 - [ ] **D1** 老路径回归：打开原地址（不带前缀）→ 响应应与部署前**完全一致**（默认仍走 v1）。
 - [ ] **D2** `/v1/…` 前缀路径 → 同上一致（剥前缀适配层）。
-- [ ] **D3** `/v2/state?key=…` → 新信封（`version:"2"`，fields + alarms + reconcile_alarms + trace）。
+- [ ] **D3** `/v2/state?key=…&locales=zh,en&platform=ios` → 新信封（`version:"2"`，
+      fields + alarms + resolve + reconcile_alarms + trace）。**`reconcile_alarms` 应是字符串 `"true"/"false"`**。
 - [ ] **D4** `/v2/timeline?key=…&date=<明天>&now=00:00` → 带 schedules 与 field_timelines 的内脏视图。
 - [ ] **D5** 手机手动跑一次各 Apply\*（前台）→ 专注/静音/音量按预期变化。
 - [ ] **D6** 真实等一个刺客时刻**后台自动触发** → 用 Append-to-Note 探针确认后台也生效

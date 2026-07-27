@@ -6,7 +6,9 @@
 //   ② quiet 边界白名单: 边界墙钟 ∉ DND.WHITELIST → 手机刺客自动化不存在，warn
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function auditFieldSubscriptions(fieldsConfig, schedules, trace) {
+import { feedsOf, FEEDS_DEFAULT, FEEDS_KNOWN } from "./registry.js";
+
+export function auditFieldSubscriptions(fieldsConfig, schedules, trace, plugins) {
   const produced = new Set(Object.keys(schedules));
   const subs = {};
   for (const [name, cfg] of Object.entries(fieldsConfig || {})) {
@@ -18,14 +20,23 @@ export function auditFieldSubscriptions(fieldsConfig, schedules, trace) {
         msg: `字段 {${names.join(",")}} 订阅了不存在的 schedule "${use}"（检查 FIELDS.*.USE 或插件注册）` });
     }
   }
-  // 集合类/事实类 schedule 不参与字段订阅，不算孤儿
-  // ⚠️ 新增"非字段订阅型"schedule（事实/闹钟集合/派生提醒）必须同步登记，否则误报孤儿
-  const exempt = new Set(["restdays", "presence", "school_break", "god_mode",
-                          "wake_alarms", "weekend_class", "ai_quota_reminder"]);
+  // 孤儿检查只针对【声明喂字段】的 schedule。喂闹钟/todo/其它插件的天然无字段订阅，不算孤儿。
+  // 判据来自插件自声明 feeds（registry.js），内核【不再持有任何插件名单】。
+  const declared = new Map((plugins || []).map((p) => [p.name, feedsOf(p)]));
   for (const p of produced) {
-    if (!subs[p] && !exempt.has(p)) {
+    const feeds = declared.get(p) ?? [FEEDS_DEFAULT];   // 未登记 → 按默认 fields 处理（响亮）
+    // 开放枚举但校验已知项: 拼错的值（如 "field"）会静默豁免掉孤儿检查，必须告警
+    for (const f of feeds) {
+      if (!FEEDS_KNOWN.has(f)) {
+        trace.push({ level: "warn", plugin: "audit", ref: "unknown_feeds",
+          msg: `插件 "${p}" 声明了未知 feeds "${f}"（已知: ${[...FEEDS_KNOWN].join("/")}）` +
+               `—— 若是拼写错误，该插件将被静默排除出所有消费方` });
+      }
+    }
+    if (feeds.includes("fields") && !subs[p]) {
       trace.push({ level: "warn", plugin: "audit", ref: "orphan_schedule",
-        msg: `schedule "${p}" 无字段订阅（孤儿，其产生逻辑可安全删除）` });
+        msg: `schedule "${p}" 无字段订阅（孤儿，其产生逻辑可安全删除）；` +
+             `若它本就不喂字段，请在插件里声明 feeds: "alarms"/"todos"/"plugins"` });
     }
   }
 }

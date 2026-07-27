@@ -14,7 +14,7 @@ import { CONFIG } from "../config.js";
 import { addDays } from "../kernel/intervals.js";
 import { buildTimeline } from "../kernel/registry.js";
 import { assembleState } from "./assemble.js";
-import { buildFocusNameMaps } from "./i18n.js";
+import { buildResolve } from "./resolve.js";
 import * as sources from "./sources.js";
 import restdays from "../plugins/restdays.js";
 import presence from "../plugins/presence.js";
@@ -23,12 +23,18 @@ import schoolBreak from "../plugins/school-break.js";
 import godMode from "../plugins/god-mode.js";
 import wakeAlarms from "../plugins/wake-alarms.js";
 import weekendClass from "../plugins/weekend-class.js";
-import aiQuota from "../plugins/ai-quota.js";
-import aiQuotaReminder from "../plugins/ai-quota-reminder.js";
+import { makeCadencePlugins } from "../plugins/cadence.js";
 import { assembleAlarms } from "./assemble.js";
 import { auditFieldSubscriptions, auditQuietWhitelist } from "../kernel/audit.js";
+import { schedulesFeeding } from "../kernel/registry.js";
 
-export const PLUGINS = [restdays, presence, quiet, schoolBreak, godMode, wakeAlarms, weekendClass, aiQuota, aiQuotaReminder];
+// 核心插件（静态注册）。cadence 任务插件由 CADENCE.TASKS 配置【生成】，见 buildPlugins。
+export const CORE_PLUGINS = [restdays, presence, quiet, schoolBreak, godMode, wakeAlarms, weekendClass];
+
+/** 核心插件 + 由配置生成的 cadence 任务插件 */
+export function buildPlugins(v2cfg) {
+  return [...CORE_PLUGINS, ...makeCadencePlugins(v2cfg)];
+}
 
 // v2 缺省配置（config.user.js 里加 V2:{...} 深合并覆盖；键名不属于 API，沿用大写风格）
 export const V2_DEFAULTS = {
@@ -42,22 +48,59 @@ export const V2_DEFAULTS = {
       KIND: "scalar", USE: "quiet", APPLY: "on_change",
       MAP: { on: 0, off: null },   // 该安静→归零(每次进入重申); 解除→无主张(白天音量归人管)
       OWN: {},                     // 单位: 整数 0–100（契约§5）。契约15: 订阅声明取代抄数字
-      // 字段级守卫示例(取消注释启用): 导航/音乐 App 前台时不归零音量
-      // GUARDS: [{ source: "app", op: "not_in", value: ["com.apple.Maps", "com.google.Maps"] }],
+      // 【恒常作用域守卫】整个字段永远适用(时点守卫写在 OWN 的值内)。取消注释即启用:
+      //   导航/视频/音乐 App 前台时不归零音量 —— 值是【语义 token】, 绝不写包名,
+      //   token→本平台标识的解析表在 edge/resolve.js, 按 ?platform= 下发(契约: 零平台字符串)
+      // GUARDS_ALWAYS: [{ source: "app", op: "not_in", value: ["maps", "video", "music"] }],
     },
-    "cadence.ai_claude": { KIND: "scalar", USE: "ai_quota", APPLY: "on_change", OWN: {} },
+    // cadence.<task> 字段由 CADENCE.TASKS 自动派生（见 withCadenceFields），此处不写死
   },
-  RECONCILE_ALARMS: ["07:40", "13:29", "22:25"],
+  // 设备自报平台（?platform=）缺省值。服务端【不维护】"哪台设备是什么平台"的注册表——
+  // 设备自报家门，新设备接入零配置（DEVICE-ABSTRACTION §4.1）。
+  DEFAULT_PLATFORM: "ios",
+  // 能力声明：⚠️【只留形状，不实现】。iOS 全链路跑通前不写任何按平台裁剪字段的逻辑，
+  // 避免过早抽象（DEVICE-ABSTRACTION §4.2 与不变量8）。安卓的真实差异（无 Focus 模型、
+  // 四路音量）无法用解析表翻译，只能声明——到时在此填，并按此只下发该平台支持的字段。
+  PLATFORMS: {
+    ios:     { fields: ["focus", "silent", "media_volume"] },
+    android: { fields: ["silent", "volume_media", "volume_ring"] },   // 形状示意，未启用
+  },
   POINT: { PAST_TOLERANCE_MIN: 3, FUTURE_TOLERANCE_MIN: 3 },
-  // 步骤⑤: AI 冷却试点（cadence 特例）。默认关，config.user.js 里 V2.AI_QUOTA.ENABLED 开。
-  AI_QUOTA: {
-    ENABLED: false,
-    STREAM: "ai_claude",
-    COOLDOWN_MINUTES: 300,                 // 5 小时滚动冷却
-    WEEKLY_RESET: { day: 1, time: "08:00" },  // 周一 08:00 额度回满（day: 0=周日…6=周六）
-    REMINDER: true,                        // 恢复时刻建 GateDyn-CAD 提醒闹钟
+  // ── 周期任务（KERNEL §10）。加一个任务 = 这里加一节【纯配置】，代码零改动。──
+  //    每个任务自动获得: schedule cadence_<task> + 字段 cadence.<task>
+  //                     + 提醒闹钟 GateDyn-CAD-<task>-<HHMM>（channel:"alarm" 时）
+  //    kind 已实现: rolling_cooldown。其余（ladder 等）等真有任务时再写，未知 kind 响亮报错。
+  CADENCE: {
+    TASKS: {
+      ai_claude: {
+        enabled: false,                      // config.user.js 里设 true 开启
+        kind: "rolling_cooldown",
+        stream: "ai_claude",                 // 事实流名（缺省 = 任务名）
+        cooldown_minutes: 300,               // 5 小时滚动冷却
+        weekly_reset: { day: 1, time: "08:00" },  // 周一 08:00 回满（day: 0=周日…6=周六）
+        channel: "alarm",                    // alarm(已建成) | todo | notification(未建成)
+        reminder: true,                      // 恢复时刻建提醒闹钟
+        title: "AI额度",                     // 提醒文案
+      },
+      // 示例（复制改名即可，无需动代码）:
+      // game_chest: { enabled: true, kind: "rolling_cooldown", cooldown_minutes: 420,
+      //               channel: "alarm", title: "宝箱" },
+    },
   },
 };
+
+/** 由 CADENCE.TASKS 自动派生 cadence.<task> 字段（加任务无需手写字段配置） */
+export function withCadenceFields(fields, v2cfg) {
+  const tasks = (v2cfg.CADENCE || {}).TASKS || {};
+  const out = { ...fields };
+  for (const name of Object.keys(tasks)) {
+    const key = `cadence.${name}`;
+    if (!out[key]) {
+      out[key] = { KIND: "scalar", USE: `cadence_${name}`, APPLY: "on_change", OWN: {} };
+    }
+  }
+  return out;
+}
 
 export function v2Config() {
   const user = CONFIG.V2 || {};
@@ -65,7 +108,8 @@ export function v2Config() {
     ...V2_DEFAULTS, ...user,
     FIELDS: user.FIELDS || V2_DEFAULTS.FIELDS,
     POINT: { ...V2_DEFAULTS.POINT, ...(user.POINT || {}) },
-    AI_QUOTA: { ...V2_DEFAULTS.AI_QUOTA, ...(user.AI_QUOTA || {}) },
+    PLATFORMS: { ...V2_DEFAULTS.PLATFORMS, ...(user.PLATFORMS || {}) },
+    CADENCE: { TASKS: { ...V2_DEFAULTS.CADENCE.TASKS, ...((user.CADENCE || {}).TASKS || {}) } },
   };
 }
 
@@ -175,6 +219,19 @@ export async function handleV2(request, env, path, loaders = sources) {
     const mode = (url.searchParams.get("mode") || "segment").toLowerCase() === "point"
       ? "point" : "segment";
     const device = url.searchParams.get("device") || "default";
+    // 平台自报（DEVICE-ABSTRACTION §4.1）: 缺省/未知 → DEFAULT_PLATFORM + trace 提示，不报错
+    const platRaw = (url.searchParams.get("platform") || "").toLowerCase().trim();
+    let platform = platRaw || cfg.DEFAULT_PLATFORM;
+    if (platRaw && !cfg.PLATFORMS[platRaw]) {
+      trace.push({ level: "warn", plugin: "router", ref: "unknown_platform",
+        msg: `未知 platform "${platRaw}"，回落 ${cfg.DEFAULT_PLATFORM}（新平台需在 V2.PLATFORMS 与 edge/resolve.js 登记）` });
+      platform = cfg.DEFAULT_PLATFORM;
+    }
+    // 强制推平: ?apply=enforce 把所有字段的 apply 置为 enforce，
+    // 手机端现成的「If ApplyMode is enforce → ShouldRun=1」直接生效，零改动。
+    // 用途: 改完 bug 想把手机推到与云端一致，一次网络、一个原子动作，不碰任何本地文件。
+    // 注意: 守卫仍然拦得住（契约3）—— enforce 只压"无变化跳过"，压不过守卫。
+    const applyOverride = url.searchParams.get("apply") === "enforce" ? "enforce" : null;
     const debug = url.searchParams.get("debug") === "1" || path === "/timeline";
     const range = { start: addDays(date, -1), end: addDays(date, 1) };
 
@@ -185,15 +242,22 @@ export async function handleV2(request, env, path, loaders = sources) {
       skipCalendar: url.searchParams.get("skipCalendar") === "1",
       testEventsRaw: url.searchParams.get("testEvents"),
     }, span, trace);
-    const factStreams = cfg.AI_QUOTA.ENABLED ? [cfg.AI_QUOTA.STREAM] : [];
+    // 要抓的事实流 = 全部已启用 cadence 任务的 stream（去重）。加任务自动带上，无需改这里。
+    const factStreams = [...new Set(
+      Object.entries((cfg.CADENCE || {}).TASKS || {})
+        .filter(([, t]) => t.enabled !== false)
+        .map(([name, t]) => t.stream || name),
+    )];
     const facts = await loaders.loadFacts(env, device, factStreams, trace);
 
     const ctx = { config: { ...CONFIG, V2: cfg }, profile: device, workdays, calendars, facts };
-    const { schedules, trace: ktrace } = buildTimeline({ plugins: PLUGINS, ctx, range });
+    const plugins = buildPlugins(cfg);
+    const { schedules, trace: ktrace } = buildTimeline({ plugins, ctx, range });
     trace.push(...ktrace);
 
     // 静态审计（纯诊断，KERNEL audit 纪律）
-    auditFieldSubscriptions(cfg.FIELDS, schedules, trace);
+    const fieldsCfg = withCadenceFields(cfg.FIELDS, cfg);
+    auditFieldSubscriptions(fieldsCfg, schedules, trace, plugins);
     auditQuietWhitelist(schedules.quiet, (CONFIG.DND || {}).WHITELIST, trace);
 
     // 外部闹钟源（I/O 半场; 换算/标签/窗口在 assembleAlarms 半场完成）
@@ -201,26 +265,33 @@ export async function handleV2(request, env, path, loaders = sources) {
       [range.start, addDays(range.start, 1), range.end], trace);
 
     // 先组闹钟（其 trace 要赶上信封的出口渲染）
-    const alarms = assembleAlarms({ config: CONFIG, schedules, range, at, externalItems, trace });
-    const focusMaps = buildFocusNameMaps(url.searchParams.get("locales"));
+    // 闹钟来源名单由【插件自声明】导出，非硬编码（feeds:"alarms"，见 kernel/registry.js）
+    const alarms = assembleAlarms({ config: CONFIG, schedules, range, at, externalItems, trace,
+                                    alarmSchedules: schedulesFeeding(plugins, "alarms") });
+    const locales = url.searchParams.get("locales");
+    const resolve = buildResolve(platform, locales);     // 先算，供 guards 展开 match[]
     const envelope = assembleState({
-      fieldsConfig: cfg.FIELDS, schedules, range, at, mode, device,
-      reconcileKeys: cfg.RECONCILE_ALARMS,
+      resolve,
+      fieldsConfig: fieldsCfg, schedules, range, at, mode, device, applyOverride,
       tolerances: { pastMinutes: cfg.POINT.PAST_TOLERANCE_MIN,
                     futureMinutes: cfg.POINT.FUTURE_TOLERANCE_MIN },
       debug, trace,
     });
     envelope.alarms = alarms;
-    if (focusMaps) envelope.i18n = {
-      focus_name_to_token: focusMaps.name_to_token,   // 守卫: 本机名→token
-      focus_token_to_name: focusMaps.token_to_name,   // 执行: token→本机名(喂 Set Focus)
-    };
+    envelope.platform = platform;
+    // resolve 节: token → 本设备实际标识。
+    // 守卫已由服务端展开成 guards[].match[]，故本节【只剩 ApplyFocus 执行段】还要用
+    // （preset token → 本机名候选数组，喂 Set Focus 逐个试开）。CheckGuards 不再需要它。
+    envelope.resolve = resolve;
     return json(envelope);
   } catch (e) {
     // 最外层兜底: 返回格式合法但安全的降级信封（宁可不动手机，契约9）
     return json({
       version: "2", generated_at: null, fields: {},
-      alarms: { window: null, fixed: [], dynamic: [] }, reconcile_alarms: false,
+      // alarms 节形状恒定（法则1 同构），但 sweep 授权位置 false:
+      //   手机端只做加法（这里 fixed/dynamic 都空，等于什么都不做），【绝不执行 sweep】。
+      //   绝不能让降级信封触发 sweep —— 空清单会被读成"全都不该开" → 关光所有动态闹钟。
+      alarms: { window: null, sweep: "false", fixed: [], dynamic: [] },
       error: "internal_degraded", detail: String(e && e.message || e),
       trace: trace.map((t) => typeof t === "string" ? t : `[${t.level}] ${t.plugin}/${t.ref}: ${t.msg}`),
     }, 200);

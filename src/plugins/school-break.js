@@ -25,6 +25,7 @@ export default {
   name: "school_break",
   kind: "level",
   scope: "shared",
+  feeds: "plugins",                 // 假期区间事实，仅被其它插件经 deps 消费
   deps: [],
   produce(ctx, range) {
     const out = [];

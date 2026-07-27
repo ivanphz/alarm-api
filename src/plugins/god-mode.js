@@ -41,6 +41,7 @@ export default {
   name: "god_mode",
   kind: "level",
   scope: "per-device",
+  feeds: "plugins",                 // 接管事实，被 quiet/wake_alarms/weekend_class 经 deps 让位消费
   deps: [],
   produce(ctx, range) {
     const vocab = vocabularyFromConfig(ctx.config);

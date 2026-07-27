@@ -34,6 +34,7 @@ export default {
   name: "presence",
   kind: "level",
   scope: "per-device",
+  feeds: "plugins",                 // 在场事实，仅被其它插件经 deps 消费
   deps: [{ name: "restdays", required: true }],
 
   produce(ctx, range) {

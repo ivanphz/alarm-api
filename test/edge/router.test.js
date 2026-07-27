@@ -29,7 +29,6 @@ test("e2e: 鉴权关闭时段采样，信封齐全（AUTH_DISABLED=true 来自 c
   assert.equal(body.fields.silent.value, "on");                 // 正典: 昨夜静音延续
   assert.equal(body.fields.focus.value.preset, "do_not_disturb"); // token，永无本地化名
   assert.equal(body.fields.media_volume.value, 0);              // 订阅 quiet: 夜间安静→归零
-  assert.equal(body.reconcile_alarms, true);
 });
 
 test("契约15: media_volume 订阅 quiet——安静归零, 解除无主张(白天音量归人管)", async () => {
@@ -50,27 +49,28 @@ test("对拍回归: focus 07:40 守卫继承 + reminder 不再误报孤儿", asy
   assert.equal(b.fields.focus.value.only_if_current, undefined);
   assert.equal(b.fields.focus.value.guards, undefined);          // 不在 value 内
   assert.deepEqual(b.fields.focus.guards,                        // 在字段级
-    [{ source: "current_focus", op: "is", value: "do_not_disturb" }]);
+    [{ source: "current_focus", op: "in", value: ["do_not_disturb"], match: [] }]);  // is→in 单元素
   assert.equal(b.fields.focus.value.action, "off");
-  assert.ok(!b.trace.some((x) => x.includes("orphan") && x.includes("ai_quota_reminder")));
+  assert.ok(!b.trace.some((x) => x.includes("orphan") && x.includes("cadence_ai_claude_reminder")));
 });
 
-test("e2e: point 模式命中 07:40 边界与对账锚点", async () => {
+test("e2e: point 模式命中 07:40 边界", async () => {
   const res = await handleV2(req("date=2026-07-15&now=07:42&mode=point"), {}, "/state", fakeLoaders());
   const body = await res.json();
-  assert.equal(body.fields.silent.changes[0].value, "off");
-  assert.equal(body.reconcile_alarms, true);
+  assert.equal(body.fields.silent.value, "off");        // 与 segment 同一读取路径
 });
 
-test("i18n 下发: ?locales=zh,en 合并反查表; 不带参数信封无此节", async () => {
-  const withI18n = await handleV2(req("date=2026-07-15&locales=zh,en"), {}, "/state", fakeLoaders());
-  const b1 = await withI18n.json();
-  assert.equal(b1.i18n.focus_name_to_token["勿扰模式"], "do_not_disturb");
-  assert.equal(b1.i18n.focus_name_to_token["Do Not Disturb"], "do_not_disturb");
-  assert.deepEqual(b1.i18n.focus_token_to_name["do_not_disturb"], ["勿扰模式", "Do Not Disturb"]);  // 候选数组, zh 优先
-  const plain = await handleV2(req("date=2026-07-15"), {}, "/state", fakeLoaders());
-  const b2 = await plain.json();
-  assert.ok(!("i18n" in b2));                          // 不请求不下发, 信封保持精瘦
+test("resolve 下发: 表名=守卫source名; locked 恒等表恒发", async () => {
+  const r1 = await handleV2(req("date=2026-07-15&locales=zh,en"), {}, "/state", fakeLoaders());
+  const b1 = await r1.json();
+  assert.deepEqual(b1.resolve.current_focus.do_not_disturb, ["勿扰模式", "Do Not Disturb"]);
+  assert.deepEqual(b1.resolve.locked, { true: ["true"], false: ["false"] });
+  assert.ok(!("i18n" in b1));                          // 旧 i18n 节已彻底删除
+
+  const r2 = await handleV2(req("date=2026-07-15"), {}, "/state", fakeLoaders());
+  const b2 = await r2.json();
+  assert.equal(b2.resolve.current_focus, undefined);   // 不传 locales 就没有语言表
+  assert.ok(b2.resolve.locked);                        // 但恒等表照发
 });
 
 test("e2e: /timeline 常开 debug 内脏", async () => {
@@ -99,5 +99,96 @@ test("e2e: loader 全炸也返回合法降级信封（宁可不动手机）", as
   assert.equal(res.status, 200);
   assert.equal(body.error, "internal_degraded");
   assert.deepEqual(body.fields, {});
-  assert.equal(body.reconcile_alarms, false);
+  assert.equal(body.alarms.sweep, "false");   // ★ 降级 → 撤销 sweep 授权，手机只加不关
+});
+
+test("platform 自报: 缺省回落 ios; 未知平台告警回落", async () => {
+  const base = await (await handleV2(req("date=2026-07-15&now=08:00&locales=zh,en"), {}, "/state", fakeLoaders())).json();
+  assert.equal(base.platform, "ios");                         // 缺省 = DEFAULT_PLATFORM
+  assert.ok(base.resolve.app && base.resolve.current_focus);
+  assert.ok(!base.trace.some((x) => x.includes("unknown_platform")));
+
+  const bad = await (await handleV2(req("date=2026-07-15&now=08:00&platform=symbian"), {}, "/state", fakeLoaders())).json();
+  assert.equal(bad.platform, "ios");                          // 未知 → 回落，不报错（§4.1）
+  assert.ok(bad.trace.some((x) => x.includes("unknown_platform")));
+
+  const nolocale = await (await handleV2(req("date=2026-07-15&now=08:00"), {}, "/state", fakeLoaders())).json();
+  assert.ok(nolocale.resolve.app);                            // app 表与 locales 无关，照发
+});
+
+test("★铁律: 信封里【任何位置】都不得出现裸布尔（iOS 会本地化成 是/否）", async () => {
+  // 实测来源 DEVLOG §1.4: JSON true 经快捷指令 Text 渲染成 "是"(中文系统)/"Yes"(英文)，
+  // 历史上还出现过 1/0。呈现方式不是契约 → 手机端拿 true 比对必然【静默失败】。
+  // 本用例全量递归扫描，新增字段/新增节点无法绕过这条铁律。
+  const walk = (node, path, hits) => {
+    if (typeof node === "boolean") { hits.push(`${path} = ${node}`); return; }
+    if (Array.isArray(node)) return node.forEach((v, i) => walk(v, `${path}[${i}]`, hits));
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`, hits);
+    }
+  };
+  for (const qs of ["date=2026-07-15&now=07:41&mode=segment&locales=zh,en",
+                    "date=2026-07-15&now=07:41&mode=point&locales=zh,en",
+                    "date=2026-07-15&now=07:41&mode=point&debug=1"]) {
+    const body = await (await handleV2(req(qs), {}, "/state", fakeLoaders())).json();
+    const hits = [];
+    walk(body.fields, "fields", hits);
+    walk(body.alarms, "alarms", hits);
+    walk(body.resolve, "resolve", hits);
+    hits.length === 0 || assert.fail(`[${qs}] 裸布尔: ${hits.join(", ")}`);        // "true"/"false"
+  }
+});
+
+
+test("★回归(真bug): 降级信封【绝不能】带 alarms 节 —— 否则手机 sweep 会关光所有动态闹钟", async () => {
+  // 事故链: 服务端任何未接住的异常 → 降级信封。若它带 alarms:{dynamic:[]}，
+  // 手机 SyncAlarms 的 sweep 规则是"不在清单里就关掉"，空清单 = 全都不在 = 【全关】。
+  // fields 发 {} 是安全的（逐键判缺席），alarms 是集合语义 —— 空数组是【合法指令】
+  // （今天真的没有动态闹钟），所以不能靠"空"识别故障，只能靠【整节缺席】。
+  const res = await handleV2(req("date=2026-07-15"), {}, "/state", {
+    async loadWorkdays() { throw new Error("boom"); },
+    async loadCalendars() { return []; },
+  });
+  const b = await res.json();
+  assert.equal(res.status, 200);                 // 200 而非 500: 手机拿到 500 会整条同步失效
+  assert.equal(b.error, "internal_degraded");
+  assert.equal(b.alarms.sweep, "false");         // ★ 撤销 sweep 授权 → 手机只加不关
+  assert.deepEqual(b.alarms.dynamic, []);        // 空清单本身合法，靠 sweep 位识别故障
+  assert.deepEqual(b.fields, {});                // fields 空是安全的（逐键判缺席）
+});
+
+test("?apply=enforce: 强制推平全部字段（守卫仍然拦得住）", async () => {
+  const norm = await (await handleV2(req("date=2026-07-15&now=08:00"), {}, "/state", fakeLoaders())).json();
+  assert.equal(norm.fields.silent.apply, "on_change");
+
+  const forced = await (await handleV2(req("date=2026-07-15&now=08:00&apply=enforce"), {}, "/state", fakeLoaders())).json();
+  for (const f of Object.values(forced.fields)) assert.equal(f.apply, "enforce");
+  // 守卫原样下发 —— enforce 只压"无变化跳过"，压不过守卫（契约3）
+  assert.deepEqual(forced.fields.focus.guards, norm.fields.focus.guards);
+});
+
+
+test("★sweep 授权: 外部闹钟源失败 → 撤销授权（只加不关，不误关那个源的闹钟）", async () => {
+  const ok = await (await handleV2(req("date=2026-07-15&now=08:00"), {}, "/state", fakeLoaders())).json();
+  assert.equal(ok.alarms.sweep, "true");                    // 正常 → 授权
+
+  const bad = await (await handleV2(req("date=2026-07-15&now=08:00"), {}, "/state", {
+    ...fakeLoaders(),
+    async loadExternalAlarms(_env, _cfg, _dates, trace) {
+      trace.push({ level: "warn", plugin: "sources", ref: "external_failed", msg: "超时" });
+      return [];                                            // 拉取失败，返回空
+    },
+  })).json();
+  assert.equal(bad.alarms.sweep, "false");                  // ★ 少了条目 → 不许 sweep
+  assert.ok(bad.trace.some((x) => x.includes("sweep_withheld")));
+  assert.ok(Array.isArray(bad.alarms.fixed));               // 加法部分照常下发
+});
+
+test("★fail-closed: 手机端判 `is true`，任何非 true 值都不该 sweep", async () => {
+  // 本用例锁的是【服务端只会输出 "true"/"false" 两个值】这一契约，
+  // 使手机端可以安全地写「If sweep is true → 执行 sweep」，其余一律跳过。
+  for (const qs of ["date=2026-07-15&now=08:00", "date=2026-07-15&now=08:00&mode=point"]) {
+    const b = await (await handleV2(req(qs), {}, "/state", fakeLoaders())).json();
+    assert.ok(["true", "false"].includes(b.alarms.sweep), `sweep=${b.alarms.sweep} 不在枚举内`);
+  }
 });

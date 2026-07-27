@@ -15,6 +15,7 @@ export default {
   name: "weekend_class",
   kind: "level",
   scope: "shared",
+  feeds: "alarms",                 // 闹钟集合，被 assembleAlarms 消费
   deps: [
     { name: "restdays", required: true },
     { name: "presence", required: true },

@@ -314,11 +314,3 @@ god-mode 解析失败原为静默吞错。改为 notes 转 trace ——
 6. **`_RECREATE_NOTE.txt` 早已失效**（所述文件均已入库）。已删除。
 7. **`src/edge/fields.js` 是死文件**（与 `kernel/fields.js` 完全相同且无人 import）。
    已记入 HANDOFF 待清理项。
-8. **`PHONE-FEASIBILITY.md` 含已被证伪的结论**（P4 断言 Set Focus 不吃变量，正是 §1.9 翻案的那条）
-   且实测栏从未回填。**删除而非归档**——留着会把人带回已撤销的方案。
-   P7 的"自定义专注名不随语言变"洞见已抢救进 KERNEL §7。
-9. **cadence 半迁移**: v0.7 只改了对外契约（字段名/标签族），插件文件、schedule 名、config 块
-   仍叫 `ai_quota`，出现 `cadence.*` 字段订阅 `ai_quota` 规则的接缝。已立项 HANDOFF §7.0。
-10. **发现契约破口**: `kernel/audit.js` 硬编码插件名豁免清单，使**验收九条 #3 对"非字段订阅型
-    插件"无法成立**（加这类插件必须改 kernel/）。修法方向（改插件自声明）已记 HANDOFF §7.1，
-    KERNEL §15 已标注该例外。

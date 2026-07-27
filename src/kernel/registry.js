@@ -12,6 +12,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { validate, normalize, sampleSegment, samplePoint } from "./intervals.js";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 注册表查询: 插件自声明 feeds = "我的产物被谁消费"
+// ─────────────────────────────────────────────────────────────────────────────
+// 开放枚举（同 kind/scope/channel，KERNEL §18）:
+//   "fields"  被字段订阅消费（默认）    "alarms"  被闹钟组装消费
+//   "todos"   被 todo 组装消费（待建）   "plugins" 仅被其它插件经 deps 消费（事实类）
+// 可以是字符串或数组（一个 schedule 将来可能同时喂两处）。
+//
+// ⭐ 为什么要有这个（契约破口修复）: 此前 kernel/audit.js 与 edge/assemble.js 各写了一张
+//    【硬编码插件名单】。后果是「新增非字段订阅型插件必须去改 kernel/」——
+//    直接违反验收九条 #3「新命名规则 = 新插件文件、内核零改动」。
+//    改为自声明后，内核与 edge 都不再认识任何插件名，加插件真正做到内核零改动。
+//
+// ⚠️ 默认值选 "fields" 是【刻意】的: 忘记声明 → 落进孤儿检查 → 响亮告警提示补声明；
+//    而不是静默豁免（静默豁免会让一个谁都不消费的插件永远躺在那没人发现）。
+export const FEEDS_DEFAULT = "fields";
+export const FEEDS_KNOWN = new Set(["fields", "alarms", "todos", "plugins"]);
+
+export function feedsOf(plugin) {
+  const f = (plugin && plugin.feeds) ?? FEEDS_DEFAULT;
+  return Array.isArray(f) ? f : [f];
+}
+
+/** 产出被 target 消费的 schedule 名单（取代一切硬编码名单） */
+export function schedulesFeeding(plugins, target) {
+  return (plugins || []).filter((p) => feedsOf(p).includes(target)).map((p) => p.name);
+}
+
 export function buildTimeline({ plugins, ctx, range }) {
   const trace = [];
   const T = (level, plugin, ref, msg) => trace.push({ level, plugin, ref, msg });

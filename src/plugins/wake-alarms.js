@@ -21,6 +21,7 @@ export default {
   name: "wake_alarms",
   kind: "level",
   scope: "per-device",
+  feeds: "alarms",                 // 闹钟集合，被 edge/assemble 的 assembleAlarms 消费
   deps: [
     { name: "restdays", required: true },
     { name: "presence", required: true },

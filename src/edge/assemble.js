@@ -4,11 +4,42 @@
 // 契约12: { version, generated_at, range, fields, trace }，双向未知字段容忍。
 // 裁剪在此发生（发布给依赖方的是未裁剪产物，见 registry 注释）。
 // trace 在此出口渲染成字符串（契约: 结构化存储，出口渲染，KERNEL §13）。
-// reconcile_alarms: 对账调度提示（原 SYNC_ALARMS 更名，命名法 §2）——
-//   point 模式 = 采样时刻命中锚点±容差；segment 模式 = 恒 true（状态重建顺带对账）。
-// ─────────────────────────────────────────────────────────────────────────────
 import { addDays, addMinutes, clampToRange, sampleSegment, samplePoint } from "../kernel/intervals.js";
 import { buildFieldTimelines } from "../kernel/fields.js";
+
+// 点号键展开为嵌套对象: fields["cadence.ai_claude"] → fields.cadence.ai_claude
+// 【通用规则，不认识任何具体字段名】—— 任何含点的字段键都按层级展开。
+// 为什么: 手机端 Shortcuts 里「取 fields.cadence 再遍历 keys」远比
+//        「把全部 fields 键按 "cadence." 前缀过滤」容易。趁手机端未搭定形，零迁移成本。
+// ─────────────────────────────────────────────────────────────────────────────
+// 信封里【永不出现裸布尔】—— 实测铁律，来自 DEVLOG §1.4
+// ─────────────────────────────────────────────────────────────────────────────
+// iOS 快捷指令把 JSON boolean 渲染成【本地化文本】: 中文系统 "是/否"、英文 "Yes/No"，
+// 历史上还出现过 1/0 与 true/false —— 呈现方式【不是契约】，随系统语言与版本漂移。
+// 手机端拿 true 去比对必然失败，而且是【静默失败】（条件永不成立，什么都不发生）。
+//
+// 定案: 凡真值一律下发【小写字符串 token】"true" / "false"。
+//   与 resolve.locked 表（{"true":["true"],"false":["false"]}）保持一致，
+//   手机端全程只做文本相等，无需任何类型体操。
+// 这条由 assemble.test.js 的"信封零裸布尔"用例全量扫描守着，新字段无法绕过。
+function boolToken(v) {
+  return typeof v === "boolean" ? String(v) : v;
+}
+
+export function nestDotted(flat) {
+  const out = {};
+  for (const [k, v] of Object.entries(flat || {})) {
+    if (!k.includes(".")) { out[k] = v; continue; }
+    const parts = k.split(".");
+    let cur = out;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (typeof cur[parts[i]] !== "object" || cur[parts[i]] === null) cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = v;
+  }
+  return out;
+}
 
 export function renderTrace(trace) {
   return (trace || []).map((t) =>
@@ -21,6 +52,28 @@ const GUARD_SOURCES = new Set(["current_focus", "app", "locked"]); // 未来: ch
 
 // 校验并归一化单条 guard：op/source 合法性 + in/not_in 的 value 必须数组。
 // 非法 → 返回 null(丢弃该条) + 记 trace，绝不静默放行一条坏守卫（治理硬失败哲学）。
+//
+// ⭐ op 收敛（DEVICE-ABSTRACTION §2.4）: is/is_not 是"单元素集合"的语法糖，
+//    【服务端翻译成 in/not_in + 单元素数组下发】—— 手机端 CheckGuards 只需实现两个分支。
+//    入参侧仍接受 is/is_not（老配置不破），出参侧恒为 in/not_in + 数组。
+const OP_SUGAR = { is: "in", is_not: "not_in" };
+
+// 服务端把语义 token 展开成【本机比较集合】match[]。
+// 为什么在服务端做（而不是手机端查 resolve 表展开）:
+//   ① 手机端 CheckGuards 少一整层嵌套循环（守卫→token→名 变成 守卫→match）
+//   ② CheckGuards 不再需要 resolve/整包信封，输入退化成"一个 guards 数组"
+//   ③ 展开语义（token 查不到 = 空展开）由服务端测试覆盖，不用在 Shortcuts 里裸奔
+// 契约不破: value[] 保留语义 token（人读/排查/跨平台不变），match[] 只是它在本机的投影。
+// 空展开语义: token 在本平台不存在 → 不贡献成员; 整张表缺失 → match=[] →
+//   in 拦截(不可能属于空集) / not_in 通过(没有要躲的)，与手机端展开的结果完全一致。
+function expandGuard(g, resolve) {
+  const table = (resolve && resolve[g.source]) || {};
+  const match = [];
+  for (const tok of g.value) {
+    for (const id of table[tok] || []) if (!match.includes(id)) match.push(id);
+  }
+  return { ...g, match };
+}
 function validateGuard(g, trace) {
   const T = (msg) => trace && trace.push({ level: "warn", plugin: "guards", ref: "bad_guard", msg });
   if (!g || typeof g !== "object") { T(`守卫非对象，已丢弃: ${JSON.stringify(g)}`); return null; }
@@ -30,8 +83,8 @@ function validateGuard(g, trace) {
     if (!Array.isArray(g.value)) { T(`guard.op ${g.op} 的 value 必须是数组，实为 ${typeof g.value}，已丢弃`); return null; }
     return { source: g.source, op: g.op, value: g.value.map(String) };
   }
-  // is/is_not: value 转文本（单值）
-  return { source: g.source, op: g.op, value: String(g.value) };
+  // is/is_not → 语法糖展开为 in/not_in 单元素数组（手机端永不见 is/is_not）
+  return { source: g.source, op: OP_SUGAR[g.op], value: [String(g.value)] };
 }
 
 // 守卫归一化 → 返回 { value, guards }（guards 提到【字段级】，与 value 同级，三字段路径一致）。
@@ -54,9 +107,11 @@ function extractGuards(value, trace) {
 }
 
 export function assembleState({
+  resolve = null,                       // token→本机标识 解析表（用于展开 guards 的 match[]）
+  applyOverride = null,                 // "enforce" = 强制推平本次全部字段（?apply=enforce）
   fieldsConfig, schedules, range, at,
   mode = "segment", device = "default",
-  reconcileKeys = [], tolerances = {}, debug = false, trace = [],
+  tolerances = {}, debug = false, trace = [],
 }) {
   const clampStart = `${range.start} 00:00`;
   const clampEnd = `${addDays(range.end, 1)} 00:00`;
@@ -68,74 +123,86 @@ export function assembleState({
   }
 
   const fields = {};
+  // ─────────────────────────────────────────────────────────────────────────
+  // 字段组装 —— 【两个模式产出完全相同的形状】(结构冻结·法则3 单路径)
+  //   fields.<x> = { kind, apply, value, from, guards? }
+  // 手机端读法恒定一句: fields.<x>.value + fields.<x>.guards，与 mode 无关。
+  // 于是边界刺客(point) 与轮询(segment) 可以【共用同一个 ApplyX 指令】，只是 URL 不同。
+  //
+  // 两个模式的唯一差别是"给你哪个值":
+  //   segment  当前所处区段的值（一定有）
+  //   point    命中时刻的值；该字段在此刻【无指令】→ 整个字段不出现（见下"缺席"语义）
+  //
+  // ⚠️ 缺席 vs null —— 两者语义不同，绝不可混（旧版把两者都表达成 null，是隐患）:
+  //   字段缺席        = 此刻没有关于它的指令 → 手机【什么都不做】
+  //   value: null    = 规则显式释放主张（如长假白天）→ 手机【删除 last_applied】(契约4)
+  // ─────────────────────────────────────────────────────────────────────────
+  const alwaysGuards = {};        // 每字段的恒常守卫（GUARDS_ALWAYS）
+  const metaOf = {};
+  const pointChanges = {};        // point 模式的明细，仅 debug 时下发
   for (const [name, segs] of Object.entries(timelines)) {
     const cfg = fieldsConfig[name] || {};
-    const meta = { kind: cfg.KIND ?? "scalar", apply: cfg.APPLY ?? "on_change" };
-    // 字段级 GUARDS（config 声明，作用于整个字段——如 volume 遇导航 App 不归零）
-    const fieldGuards = Array.isArray(cfg.GUARDS)
-      ? cfg.GUARDS.map((g) => validateGuard(g, trace)).filter(Boolean) : [];
+    metaOf[name] = { kind: cfg.KIND ?? "scalar", apply: applyOverride || cfg.APPLY || "on_change" };
+    // 恒常作用域守卫（整个字段永远适用）；时点作用域守卫在值内，由 extractGuards 取出
+    let alwaysRaw = cfg.GUARDS_ALWAYS;
+    if (!Array.isArray(alwaysRaw) && Array.isArray(cfg.GUARDS)) {
+      alwaysRaw = cfg.GUARDS;     // 旧键名过渡兼容：照用但响亮告警
+      trace && trace.push({ level: "warn", plugin: "guards", ref: "deprecated_guards_key",
+        msg: `字段 "${name}" 使用了旧键名 GUARDS，请改为 GUARDS_ALWAYS（恒常作用域）` });
+    }
+    alwaysGuards[name] = Array.isArray(alwaysRaw)
+      ? alwaysRaw.map((g) => validateGuard(g, trace)).filter(Boolean)
+                 .map((g) => expandGuard(g, resolve)) : [];
+
     if (mode === "point") {
-      const changes = samplePoint(segs, at, tolerances).map((c) => {
-        const { value, guards } = extractGuards(c.value, trace);   // 值内守卫(focus per-boundary)
-        return guards.length ? { ...c, value, guards } : { ...c, value };
+      pointChanges[name] = samplePoint(segs, at, tolerances).map((c) => {
+        const { value, guards } = extractGuards(c.value, trace);
+        return { ...c, value, guards };
       });
-      fields[name] = { ...meta, changes };
     } else {
       const seg = sampleSegment(segs, at);                   // { value, from }
       const { value, guards } = extractGuards(seg.value, trace);
-      fields[name] = { ...meta, ...seg, value };
-      // 合并: 值内守卫(focus) + 字段级守卫(标量 GUARDS)，都在字段级下发，手机读法统一
-      const all = [...guards, ...fieldGuards];
+      fields[name] = { ...metaOf[name], value: boolToken(value), from: seg.from };
+      const all = [...guards.map((g) => expandGuard(g, resolve)), ...alwaysGuards[name]];
       if (all.length) fields[name].guards = all;
     }
   }
 
-  // point 便捷视图 current_state（v1 直观性回归）: 同一份 changes 的"时刻优先"投影。
-  // 命中容差内值变化最近的一个时刻 → 全字段值包（无变化字段 = null = 不动, v1 同义）。
-  let current_state = null;
   if (mode === "point") {
-    const moments = new Map();
-    for (const [name, f] of Object.entries(fields)) {
-      for (const c of f.changes || []) {
-        if (!moments.has(c.at)) moments.set(c.at, {});
-        moments.get(c.at)[name] = c.value;   // c.value 已在上方 withGuards 归一
-      }
-    }
+    // 选中时刻: 容差窗内离 at 最近的那个边界（多字段可能在同一刻变化）
+    const moments = new Set();
+    for (const cs of Object.values(pointChanges)) for (const c of cs) moments.add(c.at);
+    let best = null;
     if (moments.size > 0) {
-      const ms = (t) => Date.UTC(+t.slice(0,4), +t.slice(5,7)-1, +t.slice(8,10), +t.slice(11,13), +t.slice(14,16));
-      const best = [...moments.keys()].sort((a, b) =>
+      const ms = (x) => Date.UTC(+x.slice(0,4), +x.slice(5,7)-1, +x.slice(8,10), +x.slice(11,13), +x.slice(14,16));
+      best = [...moments].sort((a, b) =>
         Math.abs(ms(a) - ms(at)) - Math.abs(ms(b) - ms(at)) || (a < b ? -1 : 1))[0];
-      const bundle = {};
-      for (const name of Object.keys(fields)) bundle[name] = moments.get(best)[name] ?? null;
-      current_state = { at: best, fields: bundle,
-                        reconcile_alarms: reconcileKeys.includes(best.slice(11)) };
+    }
+    for (const name of Object.keys(metaOf)) {
+      const hit = best ? pointChanges[name].find((c) => c.at === best) : null;
+      if (!hit) continue;                                    // 此刻无指令 → 字段缺席
+      fields[name] = { ...metaOf[name], value: boolToken(hit.value), from: hit.at };
+      const all = [...(hit.guards || []).map((g) => expandGuard(g, resolve)), ...alwaysGuards[name]];
+      if (all.length) fields[name].guards = all;
+      if (debug) fields[name].changes = pointChanges[name];   // 明细仅诊断用，手机端不读
     }
   }
 
   // 对账提示
-  let reconcile_alarms;
-  if (mode === "point") {
-    const past = tolerances.pastMinutes ?? 3;
-    const future = tolerances.futureMinutes ?? 3;
-    const lo = addMinutes(at, -past), hi = addMinutes(at, future);
-    const day = at.slice(0, 10);
-    reconcile_alarms = reconcileKeys.some((hm) => {
-      const t = `${day} ${hm}`;
-      return t >= lo && t <= hi;
-    });
-  } else {
-    reconcile_alarms = true;                                 // 状态重建默认顺带对账（沿袭 V11）
-  }
-
+  // ⚠️ reconcile_alarms 已退休（2026-07-26）。
+  //    它原本回答"何时执行昂贵的本地对账"，而"昂贵"里最大的一块（单独一次网络往返）
+  //    已被刺客统一拉取消灭，剩下的只是本地 Find Alarms 循环，几秒钟。
+  //    "何时对账"这个决定服务端并不比手机知道得多（轮询频率与刺客时刻本就在手机侧定），
+  //    故搬回手机端：每轮同步都顺带对账。将来若真需要节流，再作为字段加回。
   return {
     version: "2",
     generated_at: at,
     device,
     mode,
     range,
+    // 扁平键（如 "cadence.ai_claude"）—— 键名对手机端是【不透明字符串】，不解析不拆分。
+    // 曾短暂改成嵌套，但那让 fields.cadence 变成"没有 kind 的容器"，破坏同构，已撤回。
     fields,
-    ...(mode === "point" ? { current_state } : {}),
-    reconcile_alarms,
     trace: renderTrace(trace),
     ...(debug ? { schedules, field_timelines: timelines } : {}),
   };
@@ -152,10 +219,12 @@ import { sampleSegment as _sampleSegment } from "../kernel/intervals.js";
 import { buildToggleRegistry, esLabel } from "../domain/alarm-labels.js";
 import { toShanghaiWall } from "../lib/time.js";
 
-export const ALARM_SCHEDULES = ["wake_alarms", "weekend_class", "ai_quota_reminder"];
-
+// ⚠️ 此处【曾经】有一张硬编码名单 ALARM_SCHEDULES = ["wake_alarms", ...]。
+//    已移除: 名单改由插件自声明 feeds:"alarms" 得出（kernel/registry.js 的 schedulesFeeding）。
+//    调用方（router）负责传入。这样加一个产闹钟的插件 = 只写插件文件，edge 与 kernel 都不用改。
+//    todo 通道将来同理用 feeds:"todos"，【不会】再出现第二张硬编码名单。
 export function assembleAlarms({ config, schedules, range, at, externalItems = [],
-                                 alarmSchedules = ALARM_SCHEDULES, trace = [] }) {
+                                 alarmSchedules = [], trace = [] }) {
   const T = (level, ref, msg) => trace.push({ level, plugin: "alarms", ref, msg });
   const winStart = _addMinutes(at, 1);
   const winEnd = _addMinutes(at, 24 * 60);
@@ -221,5 +290,25 @@ export function assembleAlarms({ config, schedules, range, at, externalItems = [
   }
   dynamic.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
-  return { window: { start: winStart, end: winEnd }, fixed, dynamic };
+  // ── sweep 授权（★ 破坏性操作的开关，fail-closed）────────────────────────────
+  // "true"  = 本次数据权威完整 → 手机可执行 sweep（把不在清单里的动态闹钟关掉）
+  // "false" = 数据可能不全 → 手机【只做加法】（有则开、无则建），跳过 sweep
+  //
+  // 为什么要有它（真实事故链）: 手机 sweep 的规则是"不在清单就关掉"，
+  // 而空清单 = 全都不在 = 【全关】。所以一旦服务端因为任何原因少给了条目，
+  // 就会关光你的动态闹钟。而 dynamic:[] 本身是【合法指令】（今天真没有动态闹钟），
+  // 无法靠"空"识别故障 —— 只能由服务端显式声明"这批数据够不够权威"。
+  //
+  // 为什么用显式标志而不是"降级时省略 alarms 节":
+  //   省略 → 将来有人写新路径忘了省略 → 发出空 alarms → 关光闹钟（默认危险）
+  //   标志 → 将来有人忘了置 true     → 手机跳过 sweep → 什么都不做（默认安全）
+  // 手机端判 `is true`（不是 `is not false`）: 老服务端不发此字段时也自动跳过。
+  let sweep = "true";
+  const failed = (trace || []).filter((x) => x && x.ref === "external_failed");
+  if (failed.length) {
+    sweep = "false";
+    T("info", "sweep_withheld",
+      `${failed.length} 个外部闹钟源本次拉取失败 → 撤销 sweep 授权（只加不关，避免误关它们的闹钟）`);
+  }
+  return { window: { start: winStart, end: winEnd }, sweep, fixed, dynamic };
 }

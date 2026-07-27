@@ -1,41 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// index.js — V12 双轨入口（步骤③）
+// index.js — 入口（v1 已下线，v2 为唯一路径）
 // ─────────────────────────────────────────────────────────────────────────────
-// ⚠️ 入库前置操作（GitHub 网页一次 rename）:
-//    旧 src/index.js → src/v1-legacy.js（⚠️同级原地改名: 其 "./config.js" 等
-//    相对导入才不会断; V11 全逻辑连自带鉴权冻结在内）。然后本文件放 src/index.js。
-//
+// 2026-07-26 收口: 删除 /v1 冻结轨道与 v1-legacy.js / rules.js / rest-days.js /
+//   device-state.js / school-break.js（根目录那份）。ics-parser.js 仍被 v2 复用，保留。
 // 路由:
-//   /v1/*  → 冻结适配层（剥掉 /v1 前缀转交 legacy，老快捷指令零感知）
-//   /v2/state /v2/timeline → 新内核（KERNEL v0.3 全契约生效）
-//   其余（含根路径）→ 由 config.user.js 的 V2.DEFAULT 手控:
-//       false(缺省) = 走 legacy（现有手机流程不受任何影响）
-//       true        = 走 /v2/state（全部迁移后翻转，v1 择日下线）
+//   /v2/state    采样（?mode=segment|point）
+//   /v2/timeline 全时间线预览/审计（debug 常开）
+//   /v2/fact     写事实（POST） · /v2/facts 调试列取
+//   其余（含根路径）→ 一律走 /v2/state（旧的 V2.DEFAULT 开关随 v1 一起退休）
 // ─────────────────────────────────────────────────────────────────────────────
-import legacy from "./v1-legacy.js";
-import { handleV2, handleFact, v2Config } from "./edge/router.js";
+import { handleV2, handleFact } from "./edge/router.js";
 
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const path = url.pathname;
+    const path = new URL(request.url).pathname;
 
-    if (path === "/v2/state" || path === "/v2/timeline") {
-      return handleV2(request, env, path.slice(3));
-    }
-    if (path === "/v2/fact" || path === "/v2/facts") {
-      return handleFact(request, env);
-    }
-
-    if (path === "/v1" || path.startsWith("/v1/")) {
-      const stripped = new URL(request.url);
-      stripped.pathname = path.slice(3) || "/";
-      return legacy.fetch(new Request(stripped, request), env, ctx);
-    }
-
-    if (v2Config().DEFAULT === true) {
-      return handleV2(request, env, "/state");
-    }
-    return legacy.fetch(request, env, ctx);
+    if (path === "/v2/fact" || path === "/v2/facts") return handleFact(request, env);
+    if (path === "/v2/timeline") return handleV2(request, env, "/timeline");
+    return handleV2(request, env, "/state");     // /v2/state 与根路径等一切其它路径
   },
 };

@@ -33,10 +33,10 @@
 | 项 | 状态 |
 |---|---|
 | 架构 | **V12 插件化内核**，双轨: `/v1` 冻结（只修 bug）· `/v2` 现役 |
-| 测试 | `node --test` **75 用例全绿** |
-| 手机端 | ApplyState 灰度中（v3.0 独立模块架构，见 `docs/PHONE.md`） |
+| 测试 | `node --test` **98 用例全绿** |
+| 手机端 | **待装配**——服务端契约已冻结，照 `docs/PHONE.md` v4.3 从头搭一次 |
 | 默认路由 | 仍指 v1（`config.user.js` 设 `V2:{DEFAULT:true}` 后翻转） |
-| 下一步 | **设备抽象层重构**（`docs/DEVICE-ABSTRACTION.md`，设计已定稿待实施） |
+| 下一步 | **部署 → 装配手机端 → 真机 debug**（契约见 `docs/CONTRACT.md`） |
 
 ---
 
@@ -51,6 +51,7 @@ alarm-api/
 │   │   ├── intervals.js  (180)  区间代数: 归一化/合并/叠加/采样（零依赖，先有测试后有消费者）
 │   │   ├── registry.js   (100)  插件加载 → deps 拓扑排序 → 校验 → 发布 → trace
 │   │   ├── fields.js      (98)  字段订阅五旋钮渲染（USE/MAP/SKIP/OWN/APPLY）
+│   │   ├── registry.js          插件加载/拓扑/校验 + feeds 自声明查询（内核零插件名）
 │   │   └── audit.js       (44)  静态审计: 孤儿规则 / 悬空订阅 / 白名单一致性
 │   ├── plugins/                 ← 决策层（纯函数，禁 I/O 禁读时钟）
 │   │   ├── restdays.js          休息日/调休/请假/连休块
@@ -60,12 +61,12 @@ alarm-api/
 │   │   ├── god-mode.js          日历接管当天（v1 的 R1，overlay）
 │   │   ├── wake-alarms.js       起床闹钟集合（v1 的 R2）
 │   │   ├── weekend-class.js     周末课闹钟（v1 的 R3）
-│   │   └── ai-quota{,-reminder}.js  cadence 首个任务（冷却 + 派生提醒）
+│   │   └── cadence.js           周期任务超级插件（CADENCE.TASKS 生成，含 kinds 库）
 │   ├── edge/                    ← I/O 与组装（一切网络在此，插件只见纯数据）
 │   │   ├── router.js     (228)  /v2 路由 + 鉴权 + 插件挂载 + 信封组装
 │   │   ├── sources.js    (199)  日历/节假日/外部闹钟/事实 的拉取与解析
-│   │   ├── assemble.js   (225)  字段/闹钟组装 + 守卫校验归一化 + 窗口裁剪
-│   │   └── i18n.js        (53)  Focus 本机名映射下发（按 ?locales=）
+│   │   ├── assemble.js          字段/闹钟组装 + 守卫校验展开 + 窗口裁剪 + 布尔 token 化
+│   │   └── resolve.js           token→本机标识解析表（按 ?platform= / ?locales=）
 │   ├── domain/
 │   │   ├── alarm-labels.js (59) ★ Gate 标签唯一构造点（语法冻结，见 KERNEL §12）
 │   │   └── grammar.js     (56)  日历标题词法 → 类型化事实
@@ -113,9 +114,10 @@ alarm-api/
 **契约层**（改之前必读）
 | 文档 | 内容 |
 |---|---|
+| `docs/CONTRACT.md` | ⭐ **手机端契约冻结版**：四条形状法则 + 信封全貌 + 读取伪代码 |
 | `docs/KERNEL.md` | 宪法: 十五条契约、命名法、两类铁律、术语表、数据结构附录 |
 | `docs/RULEBOOK.md` | 操作手册: 事实词汇表 + 变更配方表 + 委托 AI 模板 |
-| `docs/PHONE.md` | 手机端权威: 逐动作脚本 + 铁则 + 坑表 |
+| `docs/PHONE.md` | ⭐ 手机端逐动作装配手册 v4.3：七条铁则 + 逐块脚本 + 坑表 + 验收 |
 | `docs/CHANNELS.md` | iPhone 打断/提醒/触发能力总册（新"想被提醒"需求先查此表） |
 
 **接口与运维**

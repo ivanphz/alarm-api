@@ -117,14 +117,15 @@ export default {
 ```
 FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
 ```
-（另有字段级 `GUARDS`，作用于整个字段——重构后改名 `GUARDS_ALWAYS`，见 DEVICE-ABSTRACTION §3。）
+（另有 **`GUARDS_ALWAYS`**：恒常作用域守卫，作用于整个字段，全程适用；
+时点作用域守卫写在值内（`OWN` 的 `guards` / `only_if_current`）。旧键名 `GUARDS` 仍兼容但会告警。）
 
 | 字段 | KIND | 说明 |
 |---|---|---|
 | `focus` | focus 对象 | `{preset:token, action:on/off, switch_to}`；守卫下发在**字段级** `fields.focus.guards` |
 | `silent` | scalar | `on`/`off` |
 | `media_volume` | scalar | **整数 0–100**（手机读数为 0–1 浮点，执行器 ×100 取整后比较/设置）|
-| `cadence.<task>` | scalar | 周期任务可用性（当前 `cadence.ai_claude`，见 §10） |
+| `cadence.<task>` | scalar | 周期任务可用性 `"true"/"false"/null`（扁平键，由 `CADENCE.TASKS` 自动派生，见 §10） |
 | `alarms` | 集合(level) | 期望 Gate 集合，执行器 diff 对账 |
 | `notices` | pulse | 未实装（cadence 通知通道） |
 | `reconcile_alarms` | hint | 对账调度提示 |
@@ -149,13 +150,11 @@ FIELDS.<field> = { KIND, USE, MAP, SKIP, OWN, APPLY }
    `focus_token_to_name`（执行段: token → **本机名候选数组**，逐个试开验证，成功即止）。
    种子表（2026-07-16 实测冻结）在 `src/edge/i18n.js`，含 en/zh/ja/ko：
    `do_not_disturb` / `sleep` / `personal` / `work` / `driving` / `reduce_interruptions`；空文本 = `none`。
-   > **零维护逃生门（实测记录在案，不强求）**: 内置专注的显示名随系统语言变，所以才需要这张表；
-   > 而**用户自建的自定义专注，其名称不随语言变**。若某天嫌维护翻译表烦，可自建一个自定义专注
-   > 替代内置勿扰 —— 表里加一行固定名，从此换语言零影响。
-   >
-   > ⚠️ **本节将被 DEVICE-ABSTRACTION 重构替换**: 反查表 `focus_name_to_token` 删除、
-   > `focus_token_to_name` 并入 `resolve.focus_preset`、守卫改成员判断。实施前以本节为准，
-   > 实施后以 DEVICE-ABSTRACTION §2 为准。
+   > ✅ **已实施（2026-07-25）**：`i18n` 节整个删除，改为 **`resolve` 节**，
+   > 表名 = 守卫 `source` 名（`current_focus` / `app` / `locked`）。
+   > 反查表 `focus_name_to_token` 已删——守卫改**成员判断**后与 app 守卫完全同构。
+   > 且服务端把守卫的语义 token 预展开成 `guards[].match[]`，手机端直接精确相等，
+   > 连查表都不需要（`resolve` 现在只剩 ApplyFocus 执行段用）。详见 `CONTRACT.md`。
 3. `期望 == last_applied[field]` → 跳过（on_change）。**focus 的 last_applied 存签名 `preset|action`**，
    否则跨 preset 同 action 切换（勿扰on→睡眠on）会被判"没变"而永不生效。
 4. 守卫可读 → 执行时评估；守卫拦截 = 跳过且**不落账**（enforce 压不过守卫）。
@@ -193,10 +192,13 @@ CADENCE.TASKS = {
 - `channel` = 输出路由到哪个手机能力字段: `alarm`（可靠，不依赖轮询即响铃，但污染闹钟列表、需对账）| `notification`（轻）| `todo`（走 todos 节，需先做 todo 通道）。可靠性要求决定通道选择，权在任务配置。
 - 每任务同时产出一个 level 字段 `fields.cadence.<task>` 供任何消费者查询。
 - 提醒闹钟标签族 `GateDyn-CAD-<task>-<HHMM>`（构造函数 `cadenceLabel()`）。
-- **当前实现状态**: `plugins/ai-quota.js`（冷却区间）+ `plugins/ai-quota-reminder.js`（纯派生，
-  只读 ai_quota 时间线的 false→true 跳变产提醒）。泛化 = 把冷却构造抽成 kinds 库、任务变纯配置。
-- **真嵌套字段**（`fields.cadence.<task>.available`）需改 fields 渲染核心（现为扁平字符串键
-  `"cadence.ai_claude"`）。这是 cadence 泛化的一部分，届时才做。
+- ✅ **已泛化（2026-07-25）**：`plugins/cadence.js` 由 `CADENCE.TASKS` **生成**插件——
+  一个任务 = 一张自己的 schedule `cadence_<task>` + 提醒插件 `cadence_<task>_reminder`。
+  字段 `cadence.<task>` 由 `withCadenceFields` 自动派生。加任务 = 加一节纯配置，代码零改动。
+  kinds 库当前只实现 `rolling_cooldown`（真有新玩法再写）；**未知 kind 报响亮错误 + 全程无主张**。
+- **字段键保持扁平** `"cadence.ai_claude"`（不做嵌套）：`fields` 每个条目必须同构
+  （都有 `kind`/`apply`/`value`），嵌套会让 `fields.cadence` 变成"没有 kind 的容器"，
+  破坏手机端通用循环。点号只是名字的一部分，对手机端是不透明字符串。
 
 ## 11. 文件布局【已裁决】
 
@@ -277,9 +279,10 @@ src/
 | 8 | 新输出形态/通道 | pulse/channel token |
 | 9 | 新周期任务 | CADENCE.TASKS 一节纯配置 |
 
-> ⚠️ **第 3 条当前有一个已知例外**: 若新规则是"非字段订阅型"（事实/闹钟集合/派生提醒），
-> 必须去 `kernel/audit.js` 的硬编码豁免名单登记，否则被误报孤儿 —— 即**内核并非零改动**。
-> 这是待修的契约破口，修法（豁免改插件自声明）见 HANDOFF §7.1。修好前请知悉此例外。
+> ✅ **第 3 条已完全成立**（2026-07-25）。此前 `kernel/audit.js` 与 `edge/assemble.js`
+> 各有一张硬编码插件名单，使"非字段订阅型"插件（事实/闹钟集合/派生提醒）必须改内核。
+> 现改为**插件自声明** `feeds: "fields"|"alarms"|"todos"|"plugins"`（`kernel/registry.js`），
+> **内核与 edge 不再认识任何插件名**，且有契约测试盯着（塞回硬编码即失败）。
 
 ## 16. 测试纪律
 
@@ -363,7 +366,7 @@ kernel/intervals.js 必须先有测试后有消费者。
 | `todo` / `todos` | **网关侧**平台中性待办条目/通道 | 服务端出现 reminder |
 | reminder | **手机侧**提醒事项实体（仅手机端文档使用） | 进服务端代码 |
 | `platform` | 设备自报的平台 token（`ios`/`android`），决定下发哪张解析表 | 服务端维护注册表 |
-| 值类型三法则 | 枚举→token 字符串; 数量→number; 真值→boolean | 布尔写成 "true" 字符串 |
+| 值类型三法则 | 枚举→token 字符串; 数量→number; **真值→`"true"`/`"false"` 字符串** | 发 JSON 裸布尔 —— iOS 会渲染成「是」/「Yes」，手机端静默失败（CHANNELS §6.1） |
 | `i18n.*` | 显示名映射表, **显示层数据**; 由 `?locales=` 请求下发 | 参与比较/写入 LA |
 
 ---

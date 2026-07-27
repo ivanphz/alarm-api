@@ -15,6 +15,7 @@ export default {
   name: "restdays",
   kind: "level",
   scope: "shared",
+  feeds: "plugins",                 // 休息日事实，仅被其它插件经 deps 消费
   deps: [],
 
   produce(ctx, range) {

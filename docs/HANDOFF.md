@@ -119,8 +119,10 @@ alarm-api 已完成 V12 插件化重构（双轨: `/v1` 冻结、`/v2` 现役，
 ```
 进行中  手机端 Apply* 灰度（PHONE.md, 不受下列打扰）
 ─────────────────────────────────────────────
-P0  ⭐ 设备抽象层重构（DEVICE-ABSTRACTION.md）—— 当前首要任务
-     resolve 表替代 i18n 双表 · op 收敛 in/not_in · GUARDS_ALWAYS 两作用域 · ?platform= 自报
+P0  ✅ 设备抽象层（服务端部分已完成 2026-07-25）
+     resolve 表替代 i18n · op 收敛 in/not_in · GUARDS_ALWAYS · ?platform= 自报
+     · 守卫 match[] 预展开 · 信封零裸布尔
+     ⬅️ 剩余：**部署 + 按 PHONE.md v4.3 装配手机端 + 真机 debug**（这是当前唯一在做的事）
 
 P1  todo 执行通道 → /v2 信封 todos 节 + reconcile_todos（TODO-CHANNEL.md 第一部分）
      服务端: sources.loadTodoSources + assemble.assembleTodos + domain.tdMarker()
@@ -133,10 +135,11 @@ P3  回传自愈（FEEDBACK-SELFHEAL.md）: 三阶段 观测→建议→自愈
      手机回传 applied_state + alarm_inventory → edge/reconcile.js diff 期望集 → 漂移分级
      铁律: 只"建"不"删"、固定闹钟永不自动建、回传是事实非实况、本地永远是最终裁判
 
-P4  cadence 泛化 + 命名收口（见 §7，当前处于半迁移状态）
-     ai_quota 升格为通用周期任务插件（rolling_cooldown/weekly_reset/ladder）
+P4  cadence 泛化: ai_quota 升格为通用周期任务插件（rolling_cooldown/weekly_reset/ladder）
      任务纯配置 CADENCE.TASKS; channel 可设 alarm/todo/notification
-     ⚠️ 含两处前置修复，见 §7.1/§7.2 —— 其中 audit 豁免名单不修则改名必破验收九条
+     ⚠️ 真嵌套字段 fields.cadence.<task>.available 需改 fields 渲染核心
+        （现是扁平字符串键 "cadence.ai_claude"）。**这是 cadence 泛化的一部分，
+        此时才做，别在别处顺手改 fields.js。**
 
 P5  Pages 管理前端（读 /v2/timeline + /v2/facts, 写 /v2/fact 纠偏; 拖拽编排北极星）
 P6  lib/ics + lib/time 提包 publish（calendar-api 第二消费者）
@@ -156,56 +159,7 @@ calendar-api 侧的 todo 出口是**独立轨道**，随时可做（另一仓库
 
 读 KERNEL §10（cadence 设计）+ `src/plugins/ai-quota.js`（首个特例，当范本）。
 
-### 7.0 ⚠️ 当前是半迁移状态（v0.7 只改了一半）
-
-v0.7 的"ai→cadence 归位"**只改了对外契约，没改内部命名**，于是同一个机制现在有两套名字:
-
-| 层 | 现状 | 该叫什么 |
-|---|---|---|
-| 字段名 | `fields.cadence.ai_claude` ✅ | 已归位 |
-| 标签族 | `GateDyn-CAD-*` / `cadenceLabel()` ✅ | 已归位 |
-| **插件文件** | `plugins/ai-quota.js` · `ai-quota-reminder.js` ❌ | `cadence.js` · `cadence-reminder.js` |
-| **schedule 名** | `ai_quota` · `ai_quota_reminder` ❌ | `cadence` · `cadence_reminder` |
-| **config 块** | `V2.AI_QUOTA` ❌ | `V2.CADENCE.TASKS` |
-
-**可见的接缝**: `V2_DEFAULTS.FIELDS["cadence.ai_claude"].USE = "ai_quota"`
-—— 一个 `cadence.*` 字段订阅着一条 `ai_quota` 规则。读代码的人必然卡在这。
-
-**⚠️ 边界（别过度改名）**: `ai_claude` 是**任务名**，是数据不是结构，
-和 KERNEL §10 里的 `game_chest` / `signin_x` 同级 —— **它不该被改，改了反而错**。
-要改的只有上表"机制名"那三行。
-
-**波及范围**（本次核对实测）: `src/` 4 文件 + `test/` 2 文件。
-
-### 7.1 前置修复①: kernel/audit.js 的硬编码豁免名单（必须先做）
-
-`kernel/audit.js` 里有一张写死的插件名集合，用来把"非字段订阅型 schedule"排除出孤儿告警:
-
-```js
-const exempt = new Set(["restdays", "presence", "school_break", "god_mode",
-                        "wake_alarms", "weekend_class", "ai_quota_reminder"]);
-```
-
-**这是一处真实的契约破口，两个后果:**
-1. 把 `ai_quota_reminder` 改名 → **必须动 `kernel/`** → 直接违反验收九条「kernel/ diff 为零」。
-2. 更根本: 代码注释自己写着"新增非字段订阅型 schedule 必须同步登记"
-   —— 意味着**验收九条 #3「新命名规则 = 新插件文件、内核零改动」对这一类插件目前根本做不到**。
-
-**修法（方向，实施时定稿）**: 豁免改为**插件自声明**，如插件对象加一个
-`subscribable: false`（或由 `kind` 推断），audit 从注册表读，**kernel/ 从此不认识任何插件名**。
-改完之后，加任何新插件才真正是内核零改动。
-
-### 7.2 前置修复②: edge/assemble.js 的 ALARM_SCHEDULES
-
-```js
-export const ALARM_SCHEDULES = ["wake_alarms", "weekend_class", "ai_quota_reminder"];
-```
-同样是硬编码名单，但它在 `edge/`（按 §4 落点表属允许改动区），**不违反契约，只是同样该改成
-自声明**（如插件声明 `emits: "alarms"`）。**两处一起改最省，机制一致。**
-
-### 7.3 泛化本体
-
-- **cadence 是通用周期任务插件；ai_quota 是它的第一个特例（已实现）:**
+- **cadence 是通用周期任务插件；ai_quota 是它的第一个特例（已实现），命名已归位:**
   字段 `fields.cadence.<task>`、标签族 `GateDyn-CAD-*`、`cadenceLabel()`。
 - 泛化 = 把 `ai-quota.js` 的区间构造（冷却/周重置/纠偏事实）抽成 **kinds 库**
   (`rolling_cooldown` | `weekly_reset` | `ladder` | …)，任务变**纯配置** `CADENCE.TASKS`。
@@ -249,15 +203,16 @@ Bark / workdays-core 等外部依赖一律经**适配器接口**接入，具体�
 
 ## 附: 当前状态锚点
 
-- KERNEL **v0.7** / **75 用例全绿** / v2 未正式切默认（手机灰度中）
+- KERNEL **v0.7** / **98 用例全绿** / v2 未正式切默认（服务端契约已冻结，手机端待搭）
 - **已实现**: 全部决策插件 + 字段五旋钮 + 闹钟 + 外部源 + ai_quota(cadence 特例)
   + guards(is/is_not/in/not_in, 字段级下发) + i18n 下发 + `/v2/fact` 事实流
 - **首要**: 设备抽象层重构（DEVICE-ABSTRACTION.md，设计定稿待实施）
 - **方向已定稿未实施**: todo通道 · Bark · 回传自愈 · cadence泛化 · 可视化/网页配置/多设备
-- ⚠️ **现有代码含四处待清理痕迹**:
-  ① 字段级裸 `GUARDS`（应改名 `GUARDS_ALWAYS`，DEVICE-ABSTRACTION §3）
-  ② `router.js V2_DEFAULTS` 里 media_volume 的 bundle id 注释示例（应改语义 token）
-  ③ **`src/edge/fields.js` 是 `src/kernel/fields.js` 的完全副本且无人 import —— 死文件，可直接删**
-  ④ **cadence 半迁移**: 字段/标签已归位 cadence，但插件文件/schedule名/config 块仍叫 ai_quota（§7.0）
-- ⚠️ **已知契约破口**: `kernel/audit.js` 硬编码插件名豁免清单，使验收九条 #3
-  对"非字段订阅型插件"无法成立（§7.1）。修法已定方向，随 P4 一起做
+- ✅ **2026-07-25 已完成**（服务端结构冻结批次）:
+  ① 设备抽象 A 段（`resolve` 节 / `?platform=` / `GUARDS_ALWAYS` / op 收敛 in-not_in）
+  ② 契约破口修复（插件自声明 `feeds`，内核零插件名）
+  ③ cadence 泛化（`CADENCE.TASKS` 多任务纯配置）
+  ④ **信封形状冻结**：point 与 segment 键集完全相同、`current_state` 退休、
+     `i18n` 删除、守卫预展开 `match[]`、**信封零裸布尔**
+  ⑤ 死文件清理（`edge/fields.js` / `edge/i18n.js` / `ai-quota*.js`）
+- ⬅️ **当前状态：服务端契约已冻结，等待部署 + 手机端装配**（`docs/PHONE.md` v4.3）
