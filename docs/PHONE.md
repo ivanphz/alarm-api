@@ -242,6 +242,13 @@ N10 End If
 N11 Text:
       https://<你的域名>/v2/state?key=<KEY>&mode=（Mode2）&locales=zh,en&platform=ios
     → Set Variable: Url
+      ⚠️ **这段 URL 必须手打，不要从聊天记录/网页粘贴**（2026-07-27 实案）：
+         粘贴容易带进**零宽连接符**等不可见字符，落在 `&` 与参数名之间就把参数名污染成
+         `⁠locales`，服务端 `searchParams.get("locales")` 直接返回 null。
+         **而 `mode` / `platform` 的默认值恰好等于期望值，丢了也看不出来** ——
+         只有没有默认值的 `locales` 会露馅，表现为「专注永远开不起来，别的都正常」。
+      🔎 **自查**：跑一次看 trace 里的 `router/params` 回显，它列出服务端**实际收到**的参数；
+         若参数名里有怪字符，服务端还会额外报 `param_name_polluted`。
 N12 Text: X（插入 Now）→ If →(该文本) is not → X
 N13   Text: （Url）&now=（Now） → Set Variable: Url2
 N14 Otherwise
@@ -828,6 +835,7 @@ Run Shortcut: SyncAll
 | 半夜刺客卡住不动 | 无人值守流程里放了 `Delete` | §8：只关不删 |
 | 某天早上动态闹钟全没了 | sweep 授权位没判，或写成了 `is not false` | §8 A21a 判 `is true` |
 | 手动带 `{mode,now}` 跑，静默无反应 | 把输入直接当信封用了，没过 GetState | §5 S1f 无脑路由 |
+| **专注永远开不起来，其它字段正常** | URL 里混进**不可见字符**（零宽连接符等）→ 参数名被污染 → `locales` 收不到 → `resolve.current_focus` 整张表不下发 → ApplyFocus 查不到本机名候选 | 看 trace 的 `router/params` 回显；**URL 文本删掉重新手打，别粘贴** |
 | 刺客偶发不生效 | 没传 `now=` 自己的计划时刻 | §11B |
 | 自动化夜里不跑 | Ask Before Running 没关 | §11A |
 | last_applied 存进套娃文件夹 | 路径写了 `Shortcuts/` 前缀 | §10 |
