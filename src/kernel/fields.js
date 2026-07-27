@@ -72,7 +72,19 @@ export function buildFieldTimeline(cfg, schedules, range) {
     for (const [hm, ownVal] of Object.entries(own)) {
       const from = `${d} ${padHM(hm)}`;
       if (cfg.KIND === "focus") {
-        const merged = renderFocus(cfg, boundaries.get(from) ?? null, ownVal);
+        // ⚠️ 边界"存在但值为 null"（规则【显式释放主张】，如长假早晨 R6.2a/c）
+        //    ≠ "没有边界"。OWN 若只是挂守卫/换 preset（不带 action、不带 switch_to），
+        //    不得把这条释放吞掉 —— 吞掉的后果: 白天字段仍主张"睡眠 on"(白天该归人管),
+        //    且当晚的 on 因与前值相同被归一化合并掉 → 夜里不再重进安静（契约4 失效）。
+        //    要压制该边界仍照旧: 显式写 { action: null }。
+        const hasBase = boundaries.has(from);
+        const base = boundaries.get(from) ?? null;
+        const ownDeclaresAction =
+          typeof ownVal === "string" ||
+          (ownVal && typeof ownVal === "object" &&
+           ("action" in ownVal || ownVal.switch_to != null));
+        if (hasBase && base === null && !ownDeclaresAction) continue;   // 释放主张原样保留
+        const merged = renderFocus(cfg, base, ownVal);
         if (merged === null) boundaries.delete(from);        // 压制
         else boundaries.set(from, merged);
       } else {
