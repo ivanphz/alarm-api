@@ -93,7 +93,8 @@ export const V2_DEFAULTS = {
 export function withCadenceFields(fields, v2cfg) {
   const tasks = (v2cfg.CADENCE || {}).TASKS || {};
   const out = { ...fields };
-  for (const name of Object.keys(tasks)) {
+  for (const [name, task] of Object.entries(tasks)) {
+    if (task && task.enabled === false) continue;   // 关闭的任务字段整体缺席（见 cadence.js 说明）
     const key = `cadence.${name}`;
     if (!out[key]) {
       out[key] = { KIND: "scalar", USE: `cadence_${name}`, APPLY: "on_change", OWN: {} };
@@ -269,6 +270,21 @@ export async function handleV2(request, env, path, loaders = sources) {
     const alarms = assembleAlarms({ config: CONFIG, schedules, range, at, externalItems, trace,
                                     alarmSchedules: schedulesFeeding(plugins, "alarms") });
     const locales = url.searchParams.get("locales");
+    // ── 参数回显（诊断）──────────────────────────────────────────────────────
+    // 把服务端【实际收到】的查询参数原样打进 trace。
+    // 起因（2026-07-27 实案）: 手机端 URL 里混进不可见字符（零宽连接符等），
+    //   参数名被污染成 "\u2060locales" → searchParams 取不到 → resolve.current_focus 整张表
+    //   不下发 → ApplyFocus 查不到本机名候选 → 专注永远开不起来。
+    // 而 mode/platform 的默认值恰好等于期望值，丢了也看不出来 —— 只有 locales 露了馅。
+    // 有了这行，任何参数丢失/污染都一眼可见，不必再靠猜。
+    const seen = [...url.searchParams.keys()];
+    trace.push({ level: "info", plugin: "router", ref: "params",
+      msg: `收到参数[${seen.length}]: ${seen.map((k) => `${k}=${url.searchParams.get(k)}`).join(" ") || "（无）"}` });
+    if (seen.some((k) => /[^\x20-\x7e]/.test(k))) {
+      trace.push({ level: "warn", plugin: "router", ref: "param_name_polluted",
+        msg: `参数名含非 ASCII 字符（多半是 URL 里混进了不可见字符，如零宽连接符）：` +
+             `${JSON.stringify(seen)} —— 请在手机端把 URL 文本删掉重新手打，不要粘贴` });
+    }
     const resolve = buildResolve(platform, locales);     // 先算，供 guards 展开 match[]
     const envelope = assembleState({
       resolve,
