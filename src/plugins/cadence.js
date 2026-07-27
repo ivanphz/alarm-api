@@ -174,9 +174,14 @@ export function makeCadencePlugins(v2cfg) {
   const tasks = (v2cfg.CADENCE || {}).TASKS || {};
   const out = [];
   for (const [name, raw] of Object.entries(tasks)) {
+    // ⛔ 关闭的任务【整体不生成】—— 不注册插件、不派生字段（见 withCadenceFields 同款判断）。
+    //    为什么不能"注册但产出 null"（2026-07-27 实案修正）:
+    //      null 在契约里有确切含义 ——「显式释放主张」→ 手机端【删除 last_applied】。
+    //      而"这个任务我关掉了"的正确语义是【字段缺席】= 手机端什么都不做。
+    //    两者动作相反。让一个关闭的功能持续下发"请删除你的记忆"是错的。
+    //    （关掉任务不会连累别人: cadence 任务的唯一下游是它自己的 reminder，一并跳过。）
+    if (raw.enabled === false) continue;
     out.push(makeTaskPlugin(name));
-    // 注意: 插件【集合】不随 enabled/reminder 变化，只有【产出】变化。
-    // 否则关掉一个任务会让 schedule 凭空消失，下游 deps 与 audit 都要跟着抖。
     const channel = raw.channel || "alarm";
     if (channel === "alarm") {
       out.push(makeReminderPlugin(name));
