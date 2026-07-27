@@ -12,6 +12,25 @@
  * ==============================================================================
  */
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 安静时刻表（唯一真相）—— 下面 DND 段与 V2.FIELDS.focus.OWN 都从这里取。
+//
+// 为什么提成常量: focus 的 OWN 键【必须与 DND 的时刻字面相等】才能"焊"在同一个
+// 订阅边界上（kernel/fields.js: 同刻 = 合并微调，不同刻 = 独立主张）。
+// 两处各写一遍字符串 = 改一处忘另一处 → 午间静音照常、但专注挡位悄悄回落成 sleep，
+// 不报错不告警。KERNEL §15「语义同源→改一处全跟」，故共用一份。
+// ★ 改时刻请去 config.user.js 覆盖 DND.<键>，并同步覆盖 DND.WHITELIST 与
+//   V2.FIELDS.focus.OWN 的对应键（用户层没有本常量，只能写字面量）。
+// ─────────────────────────────────────────────────────────────────────────────
+const DND_TIMES = {
+  NIGHT_ON_WORKDAY_EVE: "20:55",   // 明天上班 → 今晚提前静音
+  NIGHT_ON_REST_EVE:    "22:25",   // 明天休息 → 今晚晚点静音
+  MORNING_OFF_WORKDAY:  "07:40",   // 工作日早间解除（含出差日/半天假的正常上班半天）
+  MORNING_OFF_WEEKEND:  "09:30",   // 普通周末(块<3天)早间解除
+  NOON_ON:  "12:15",               // 工作日午休静音
+  NOON_OFF: "13:29",               // 工作日午休解除
+};
+
 export const DEFAULT_CONFIG = {
 
   // 🔌 鉴权开关默认值: false = 正常鉴权。日常切换请改 config.user.js 里的同名项。
@@ -199,13 +218,11 @@ export const DEFAULT_CONFIG = {
   //    自动化的触发时间同步改掉，两边一致才生效。
   // ───────────────────────────────────────────────────────────────────────────
   DND: {
-    NIGHT_ON_WORKDAY_EVE: "20:55",   // 明天上班 → 今晚提前静音
-    NIGHT_ON_REST_EVE:    "22:25",   // 明天休息 → 今晚晚点静音
-    MORNING_OFF_WORKDAY:  "07:40",   // 工作日早间解除（含出差日/半天假的正常上班半天）
-    MORNING_OFF_WEEKEND:  "09:30",   // 普通周末(块<3天)早间解除
-    NOON_ON:  "12:15",               // 工作日午休静音
-    NOON_OFF: "13:29",               // 工作日午休解除
-    WHITELIST: ["20:55", "22:25", "07:40", "09:30", "12:15", "13:29"]
+    ...DND_TIMES,                    // 六个时刻的字面值见文件顶部 DND_TIMES
+    // 白名单 = 上面六个时刻，自动派生（原先手写一遍，加时刻忘了补 = 静默漏触发）。
+    // 现值: ["20:55","22:25","07:40","09:30","12:15","13:29"]
+    // ⚠️ 在 config.user.js 里改了某个时刻，仍需一并覆盖 WHITELIST（数组是整段替换）。
+    WHITELIST: Object.values(DND_TIMES)
   },
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -312,17 +329,43 @@ export const DEFAULT_CONFIG = {
     FIELDS: {
       focus: {
         KIND: "focus", USE: "quiet", APPLY: "on_change",
-        PRESET: "sleep",             // ★ 夜间开启的专注模式（token，不是显示名）
+        PRESET: "sleep",             // ★ 缺省专注模式 = 夜间挡（token，不是显示名）
                                      //   token→本机名候选表在 edge/resolve.js，按 ?locales= 下发
+                                     //   ⬇ 午间那两个边界在 OWN 里换成 do_not_disturb
         // ── 时点作用域守卫：只在这些边界生效（恒常守卫写 GUARDS_ALWAYS）──
         //    语义：只有【当前确实是 sleep】才动 focus。
         //    保护的是"你手动开了别的专注（工作/驾驶/自定义）"这种情况 —— 不该被早间解除误杀（契约3）。
         //    only_if_current 是单值语法糖，服务端翻译成
         //      { source:"current_focus", op:"in", value:["sleep"], match:[本机名...] }
         //    要多值就直接写完整语法：guards: [{source:"current_focus", op:"in", value:["sleep","do_not_disturb"]}]
+        // ── OWN: 焊在订阅边界同刻 = 合并微调（挂守卫 / 换 preset），动作缺省继承规则 ──
+        //    ★ 夜/昼两挡（Ivan 2026-07-27）: 晚上睡觉开【睡眠】，白天午休开【勿扰】。
+        //      同一条 quiet 规则、同一批边界，只是不同时刻要求不同的专注挡位 ——
+        //      这正是 OWN "换 preset" 的用法（HORIZON §6.5 路线①/②之外的最小解，
+        //      手机端零改动: ApplyFocus 本就按 value.preset 查候选名开专注）。
+        //    ★ 只在【规则真的在该时刻产了边界】时才生效: 周末没有午间键 → 这两行自动失效
+        //      （无 action 无 switch_to = 无事可做，不产生幻影边界）。
         OWN: {
-          "07:40": { only_if_current: "sleep" },   // 工作日早间解除
-          "09:30": { only_if_current: "sleep" },   // 周末早间解除
+          // ── 开启侧: 不打破你手动开的现场（Ivan 2026-07-27）──────────────────
+          //   in:["none", 目标挡] = 【当前没专注】或【已经是目标挡】才动手。
+          //   手动开了勿扰/工作/驾驶/自建专注 → 整条让路，这一晚不进睡眠。
+          //   为什么把目标挡自己也列进去: 你 20:00 手动开了睡眠，20:55 若被拦，
+          //   la_focus 不落账 → 第二天 07:40 的解除会被判"没变"而永不点火 → 睡眠挂一整天。
+          //   列进去则照常执行一次（Set Focus 幂等）并落账，晨间解除照常。
+          //   被拦不是永久失败: SKIP 不落账，下一次轮询(每小时)会重试，开车结束即自动补上。
+          [DND_TIMES.NIGHT_ON_WORKDAY_EVE]: { only_if_current: ["none", "sleep"] },
+          [DND_TIMES.NIGHT_ON_REST_EVE]:    { only_if_current: ["none", "sleep"] },
+          // ── 解除侧: 只解除本挡，别人的现场不碰 ─────────────────────────────
+          [DND_TIMES.MORNING_OFF_WORKDAY]: { only_if_current: "sleep" },  // 工作日早间解除睡眠
+          [DND_TIMES.MORNING_OFF_WEEKEND]: { only_if_current: "sleep" },  // 周末早间解除睡眠
+          // 午休: 白天不开睡眠（睡眠会压低屏幕/进睡眠界面，且与就寝日程纠缠），改开勿扰
+          [DND_TIMES.NOON_ON]:  { preset: "do_not_disturb",
+                                  only_if_current: ["none", "do_not_disturb"] },
+          // 午休解除: 对称守卫 —— 只有当前确实是勿扰才关，护住你手动开的工作/驾驶专注。
+          // ⚠️ 守卫依赖 ?locales= 展开本机名: URL 丢了 locales → match 空 → in 永远拦截
+          //    → 午休后不解除。现在这种情况会在 trace 里响亮告警（edge/assemble.js）。
+          //    不想要这层保护就把 only_if_current 删掉（action 仍继承规则的 off）。
+          [DND_TIMES.NOON_OFF]: { preset: "do_not_disturb", only_if_current: "do_not_disturb" },
         },
       },
       silent: { KIND: "scalar", USE: "quiet", SKIP: ["12:15", "13:29"], APPLY: "on_change", OWN: {} },
