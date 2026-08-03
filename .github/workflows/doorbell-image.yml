@@ -1,0 +1,32 @@
+# ==============================================================================
+# 构建门铃调度器镜像并推到 GHCR —— 保住"只用 GitHub 网页改代码"的流程
+#   改完 server/index.mjs 提交 → 自动构建 → 服务器上 docker compose pull && up -d
+# ==============================================================================
+name: doorbell image
+
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/doorbell-image.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/alarm-doorbell:latest
+            ghcr.io/${{ github.repository_owner }}/alarm-doorbell:${{ github.sha }}
