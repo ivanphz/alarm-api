@@ -17,6 +17,27 @@ import { classify, vocabularyFromConfig } from "../domain/grammar.js";
 import { eventLabel } from "../domain/alarm-labels.js";
 import { computeCollisions } from "./presence.js";
 
+// ── last_wake: 当日【最晚的起床闹钟】时刻 ────────────────────────────────────
+// 给规则表当锚点用: "解除时刻 = 最晚起床闹钟 + N 分钟"（ATOMIC-RULES §4）。
+// 之前 focus/silent 的解除写死 07:40 —— 那是"覆盖所有场景的最晚闹钟 + 余量"的
+// 手工值: 普通工作日最晚 06:29、寒暑假 07:24、节后首日 07:38、出差 08:10。
+// 写死的代价是出差日闹钟 08:10 才响、状态却 07:40 就解除了（2026-07-28 实案）。
+// 锚定之后自动适应，加新闹钟组也不用回头改解除时刻。
+//
+// 只认【起床】类: 午休结束(NapEnd)、下班(OffWork) 不算，否则解除会被拖到傍晚。
+// 动态闹钟一律算起床（它们本来就是为了叫醒而建的）。
+function lastWake(ctx, fixedLabels, dynamic) {
+  const table = new Map((ctx.config.FIXED_ALARMS || []).map((a) => [a.label, a.scheduledAt]));
+  const times = [];
+  for (const label of fixedLabels || []) {
+    if (!/WakeUp/i.test(label)) continue;
+    const t = table.get(label);
+    if (t) times.push(t);
+  }
+  for (const d of dynamic || []) if (d && d.time) times.push(d.time);
+  return times.length ? times.sort().at(-1) : null;
+}
+
 export default {
   name: "wake_alarms",
   kind: "level",
@@ -44,7 +65,9 @@ export default {
     for (let d = range.start; d <= range.end; d = addDays(d, 1)) {
       const god = S("god_mode", d);
       if (god) {                                             // R1: 完全接管
-        out.push({ from: `${d} 00:00`, value: { fixed: [...god.fixed], dynamic: [...god.dynamic] } });
+        out.push({ from: `${d} 00:00`,
+          value: { fixed: [...god.fixed], dynamic: [...god.dynamic],
+                   last_wake: lastWake(ctx, god.fixed, god.dynamic) } });
         continue;
       }
       const p = S("presence", d);
@@ -85,7 +108,7 @@ export default {
         dynamic.push({ label, time: ev.start_time, reason: ev.title });
       }
 
-      out.push({ from: `${d} 00:00`, value: { fixed, dynamic } });
+      out.push({ from: `${d} 00:00`, value: { fixed, dynamic, last_wake: lastWake(ctx, fixed, dynamic) } });
     }
     return out;
   },

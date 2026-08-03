@@ -109,20 +109,44 @@ export const GROUPS = {
  *    新: 把 guard 里的 token 展开成本机名集合，判断当前名是否 ∈ 集合
  *    好处: 与 app 守卫【完全同构】(都是 token→标识数组→成员判断)，手机端一套逻辑吃两种源。
  */
-export function buildFocusTable(localesParam) {
-  if (!localesParam) return null;
+// 音量通道名（Set Volume 的通道选择器支持喂变量，Ivan 2026-07-28 英文实测通过）。
+// 中文实测取自截图: 「媒体」「电话铃声」。机制与 FOCUS_NAMES 完全一致。
+const VOLUME_CHANNEL_NAMES = {
+  en: { "Media": "media", "Ringtone": "ringtone" },
+  zh: { "媒体": "media", "电话铃声": "ringtone" },
+};
+
+export function buildVolumeChannelTable(localesParam) {
+  return foldNames(VOLUME_CHANNEL_NAMES, localesParam);
+}
+
+// ── 语言表折叠（focus 与 volume 通道共用）──────────────────────────────────
+// ★ 缺省 = 全语言兜底（Ivan 2026-07-31）。
+//   原先缺 locales 就整表不下发 → 守卫 match 全空 → in 永远拦截 → focus 整个报废。
+//   fail-closed 在这里是错的选择: 瘫痪比"少保护"糟得多。
+//   全语言的代价只是 Set Focus 要多试几个名字（每次带 Wait，慢一点），换来永不瘫痪。
+//   ⚠️ 但降级【必须响亮】—— 调用方要把 fellBack 写进 trace，否则就成了静默凑合。
+function foldNames(dict, localesParam) {
+  const wanted = String(localesParam || "").toLowerCase().split(",")
+    .map((x) => x.trim().split("-")[0]).filter(Boolean);
+  // 命中的语言按 locales 顺序排前面（首位决定 Set Focus 先试哪个名字，PHONE §7）；
+  // 其余语言追加在后面当兜底 —— 有序数组本身就是优先级。
+  const hit = wanted.filter((k) => dict[k]);
+  const rest = Object.keys(dict).filter((k) => !hit.includes(k));
+  const order = hit.length ? [...hit, ...rest] : Object.keys(dict);
   const token_to_name = {};
-  let hit = false;
-  for (const loc of String(localesParam).toLowerCase().split(",")) {
-    const key = loc.trim().split("-")[0];              // zh-CN → zh
-    const tbl = FOCUS_NAMES[key];
-    if (!tbl) continue;
-    hit = true;
-    for (const [name, token] of Object.entries(tbl)) {
+  for (const key of order) {
+    for (const [name, token] of Object.entries(dict[key])) {
       (token_to_name[token] ||= []);
       if (!token_to_name[token].includes(name)) token_to_name[token].push(name);
     }
   }
+  return { table: token_to_name, fellBack: hit.length === 0 };
+}
+
+export function buildFocusTable(localesParam) {
+  const { table: token_to_name, fellBack } = foldNames(FOCUS_NAMES, localesParam);
+  const hit = !fellBack;
   // ── 语义 token `none` = 【当前没有任何专注】────────────────────────────────
   // 依据: PHONE §3 G11 / §7 F24 —— `Get Current Focus` 在无专注时返回【空】。
   // 于是"无专注"在本机的投影就是空字符串，它不随语言变（没有显示名可翻译）。
@@ -131,8 +155,9 @@ export function buildFocusTable(localesParam) {
   // 为什么仍然放在 locales 分支内（而不是恒发）: 若恒发，缺 ?locales= 时
   //   in:["none","sleep"] 会退化成"仅当无专注"且 match 非空 → 空展开告警不响 →
   //   静默少了一半语义。放在里面则整表缺失 → match 空 → 响亮告警（fail-loud 优先）。
-  if (hit) token_to_name.none = [""];
-  return hit ? token_to_name : null;
+  // none 恒发: 它是"没有专注"的投影（空字符串），不随语言变，降级时更需要它
+  token_to_name.none = [""];
+  return { table: token_to_name, fellBack: !hit };
 }
 
 /** locked 恒等表: 让"无需展开"的源也走同一句展开逻辑，手机端零分支 */
@@ -168,12 +193,21 @@ export function buildAppTable(platform) {
  * 两者互不影响（包名不本地化，显示名不随平台变）。
  * 返回 null = 无可下发内容，信封省略 resolve 节。
  */
-export function buildResolve(platform, localesParam) {
+export function buildResolve(platform, localesParam, trace) {
   const node = { locked: LOCKED_TABLE };                 // 恒等表恒发（常量，零成本）
   const focus = buildFocusTable(localesParam);
-  if (focus) node.current_focus = focus;                 // 表名 = 守卫 source 名
+  node.current_focus = focus.table;                      // 表名 = 守卫 source 名
   const app = buildAppTable(platform);
   if (app) node.app = app;
+  node.volume_channel = buildVolumeChannelTable(localesParam).table;
+
+  if (focus.fellBack && trace) {
+    trace.push({ level: "warn", plugin: "resolve", ref: "locales_fallback",
+      msg: `?locales= 缺失或无法识别("${localesParam ?? ""}") → 已降级为【全语言兜底表】。` +
+           `功能不瘫痪（守卫照常命中、专注照常能开），代价是 Set Focus 要多试几个名字。` +
+           `⚠️ 但候选顺序不再以你的系统语言优先 —— 手机端应当自报语言（Actions 的 ` +
+           `Get User Details → Language Code，见 docs/ACTIONS-APP.md §3.2）` });
+  }
   return node;
 }
 

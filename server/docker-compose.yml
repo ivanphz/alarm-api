@@ -1,0 +1,23 @@
+# ==============================================================================
+# 门铃调度器 —— Ubuntu 上一条 docker compose up -d 就跑起来
+#   更新: docker compose pull && docker compose up -d
+#   看状态: curl localhost:8787/health
+# ==============================================================================
+services:
+  doorbell:
+    image: ghcr.io/ivanphz/alarm-doorbell:latest   # ← 改成你的 GitHub 用户名
+    container_name: alarm-doorbell
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # Worker 地址与网关 key（key 与 Worker 的 GATEWAY_KEY 必须一致）
+      WORKER_BASE: "${WORKER_BASE}"
+      GATEWAY_KEY: "${GATEWAY_KEY}"
+      # 盯外部源的间隔（秒）。这决定了日历改动多久能反映到计划里
+      WATCH_SECONDS: "30"
+      # 兜底自检: 计划超过这么久没更新就主动拉一次
+      PULL_MINUTES: "30"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

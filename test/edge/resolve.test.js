@@ -37,8 +37,11 @@ test("空展开语义: 未知平台/空原子表 → null，信封省略该节",
 test("表名 = 守卫 source 名（手机端 resolve[guard.source][token] 零对照表）", () => {
   const r = buildResolve("ios", "zh,en");
   // 三张表的键，必须与 guards 里可能出现的 source 一一对应
-  assert.deepEqual(Object.keys(r).sort(), ["app", "current_focus", "locked"]);
-  assert.deepEqual(r.current_focus.do_not_disturb, ["勿扰模式", "Do Not Disturb"]);  // locales 顺序=优先级
+  assert.deepEqual(Object.keys(r).sort(), ["app", "current_focus", "locked", "volume_channel"]);
+  assert.deepEqual(r.volume_channel.media, ["媒体", "Media"]);   // 通道也是 token（2026-07-28）
+  assert.deepEqual(r.current_focus.none, [""]);                  // 恒发: "没有专注"不随语言变
+  // locales 顺序=优先级: 命中的语言排前面，其余语言追加在后当兜底
+  assert.deepEqual(r.current_focus.do_not_disturb.slice(0, 2), ["勿扰模式", "Do Not Disturb"]);
   assert.deepEqual(r.locked, LOCKED_TABLE);            // 恒等表恒发 → 手机端零"免展开"分支
   // 法则2 恒数组: 每张表的每个值都必须是数组，无论几个元素
   for (const tbl of Object.values(r)) {
@@ -48,8 +51,8 @@ test("表名 = 守卫 source 名（手机端 resolve[guard.source][token] 零对
 
 test("platform 与 locales 互不影响（包名不本地化，显示名不随平台变）", () => {
   const a = buildResolve("ios", "zh,en");
-  const b = buildResolve("ios", null);                 // 不要语言表
-  assert.equal(b.current_focus, undefined);
+  const b = buildResolve("ios", null);                 // 缺 locales → 全语言兜底，不再缺席
+  assert.ok(b.current_focus.sleep.includes("睡眠"));
   assert.deepEqual(b.app, a.app);                      // app 表不受 locales 影响
 
   const c = buildResolve("android", "zh,en");          // 安卓空表
@@ -58,14 +61,26 @@ test("platform 与 locales 互不影响（包名不本地化，显示名不随�
   assert.deepEqual(c.locked, LOCKED_TABLE);            // locked 恒在
 });
 
-test("focus 表: 多语言合并，候选名数组按 locales 优先级；反查表已删除", () => {
-  const m = buildFocusTable("zh,en");
-  assert.deepEqual(m.sleep, ["睡眠", "Sleep"]);
-  assert.deepEqual(m.do_not_disturb, ["勿扰模式", "Do Not Disturb"]);
-  assert.equal(buildFocusTable("klingon"), null);      // 未知语言 → null，不报错
-  assert.equal(buildFocusTable(""), null);
+test("focus 表: 候选名按 locales 优先级排序，其余语言追加兜底；反查表已删除", () => {
+  const { table: m, fellBack } = buildFocusTable("zh,en");
+  assert.equal(fellBack, false);
+  assert.deepEqual(m.sleep.slice(0, 2), ["睡眠", "Sleep"]);
+  assert.deepEqual(m.do_not_disturb.slice(0, 2), ["勿扰模式", "Do Not Disturb"]);
   // 守卫改成员判断后不再需要 name→token 反查（与 app 守卫同构）
   assert.equal(typeof m.name_to_token, "undefined");
+});
+
+// ★ 缺 / 无法识别 locales → 全语言兜底而不是不下发（Ivan 2026-07-31）
+// 理由: 原先 fail-closed 会让 match 全空 → in 永远拦截 → focus 整个报废。
+// 瘫痪比"少保护"糟得多；代价只是 Set Focus 多试几个名字。
+test("未知语言 / 缺参 → 全语言兜底 + fellBack 标记（不再返回 null）", () => {
+  for (const arg of ["klingon", "", null, undefined]) {
+    const { table, fellBack } = buildFocusTable(arg);
+    assert.equal(fellBack, true, `${arg} 应标记为降级`);
+    assert.ok(table.sleep.includes("睡眠") && table.sleep.includes("Sleep"),
+      "兜底表必须含全部语言，否则守卫还是命中不了");
+    assert.deepEqual(table.none, [""]);
+  }
 });
 
 test("契约红线: 解析表里的 token 名不得含平台字符串", () => {

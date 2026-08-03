@@ -4,7 +4,7 @@
 // 契约12: { version, generated_at, range, fields, trace }，双向未知字段容忍。
 // 裁剪在此发生（发布给依赖方的是未裁剪产物，见 registry 注释）。
 // trace 在此出口渲染成字符串（契约: 结构化存储，出口渲染，KERNEL §13）。
-import { addDays, addMinutes, clampToRange, sampleSegment, samplePoint } from "../kernel/intervals.js";
+import { addDays, addMinutes, clampToRange, levelsOnly, sampleSegment, samplePoint } from "../kernel/intervals.js";
 import { buildFieldTimelines } from "../kernel/fields.js";
 
 // 点号键展开为嵌套对象: fields["cadence.ai_claude"] → fields.cadence.ai_claude
@@ -127,9 +127,61 @@ function extractGuards(value, trace) {
   return { value: outValue, guards };   // 空数组=手机 CheckGuards 见空即 PASS
 }
 
+// ── 两根正交的轴（2026-07-27 重整）────────────────────────────────────────────
+// 【SHAPE 主张形状】★ 边界级（不是字段级），决定"这条时间线怎么读"——见 kernel/fields.js
+//   level          电平: 值持续到下一个 level 边界；同值合并；null = 撤销主张
+//   level + until  有界电平: 窗口内持续主张，到点自动撤销（漏发兜底的正解）
+//   pulse          脉冲: 一次性事件，同值不合并，**段查询看不见**（= 时长 0 的有界电平）
+// 【APPLY 执行判据】可按边界指定，决定"收到值以后凭什么动手"
+//   always      收到就做（守卫仍可否决）        → 下发 enforce
+//   if_changed  与本地记忆(la)比，变了才做      → 下发 on_change
+//               仅对【读不回来】的字段有意义（silent）
+//   if_differs  与【实测态】比，不一致才做      → 设计完成，手机端未实现（见 §设计）
+//
+// 可观测性不是旋钮，是约束: 读不回来的字段只能用 always/if_changed。
+// 旧名对照: once = impulse+always；enforce = level+always；on_change = level+if_changed。
+function hhmm(ts) { return typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : null; }
+// 有界电平的【撤销边界】和别的边界一样，需要有人来取 —— 生成了不等于生效了。
+// 出差日实证(2026-07-28): 出差事件占了午间区带 → R6.3 不产午间两键 → 全天只有
+// 07:40(有守卫) 和 20:55 两个边界。07:40 守卫拦下不落账 → la 冻在 sleep|on →
+// 20:55 判"没变化"跳过 → 死锁，连着几晚不进睡眠，全程无任何报错。
+// 长假是同一个洞的另一个出口（那边表现为同值合并）。共同根因: 午间两键一直在
+// 无意中当"死锁解除器"（13:29 无守卫必落账），而出差/长假恰好把它抽走。
+function auditWindowTriggers(timelines, whitelist, trace) {
+  if (!whitelist || !whitelist.length || !trace) return;
+  const allow = new Set(whitelist);
+  const missing = new Set();
+  for (const segs of Object.values(timelines || {})) {
+    for (const seg of segs) {
+      const hm = String(seg.from).slice(11, 16);
+      if (!hm || hm === "00:00" || allow.has(hm)) continue;   // 00:00 是锚定伪边界
+      missing.add(hm);
+    }
+  }
+  for (const hm of [...missing].sort()) {
+    trace.push({ level: "info", plugin: "audit", ref: "needs_doorbell",
+      msg: `边界 ${hm} 不在刺客白名单里 → 依赖门铃送达（服务端 cron/服务器会扫到它）。` +
+           `⚠️ 若 PUSH.ENABLED=false 则这一刻【永远送不出去】—— 撤销边界卡住的后果是 ` +
+           `la 冻结 → 夜间被判无变化跳过 → 连夜不进睡眠（2026-07-28 出差实案）` });
+  }
+}
+
+const WIRE = { always: "enforce", if_changed: "on_change" };   // 配置词汇 → 信封词汇
+// 优先级: ?apply=enforce 全局覆盖 > 边界自带（规则路径编译期定的）> 按时刻表 > 字段缺省
+function applyFor(cfg, seg, applyOverride) {
+  if (applyOverride) return applyOverride;
+  const at = hhmm(seg && seg.from);
+  const raw = (seg && seg.apply)
+    || (at && cfg.APPLY_AT && cfg.APPLY_AT[at])
+    || cfg.APPLY || "if_changed";
+  return WIRE[raw] || raw;                                 // 旧写法 enforce/on_change 原样放行
+}
+
 export function assembleState({
   resolve = null,                       // token→本机标识 解析表（用于展开 guards 的 match[]）
   applyOverride = null,                 // "enforce" = 强制推平本次全部字段（?apply=enforce）
+  telemetry = null,                     // 手机端埋点总入口，原样随信封下发
+  triggerWhitelist = null,              // 允许的触发时刻（审计撤销边界有没有人来取）
   fieldsConfig, schedules, range, at,
   mode = "segment", device = "default",
   tolerances = {}, debug = false, trace = [],
@@ -142,6 +194,8 @@ export function assembleState({
   for (const [name, segs] of Object.entries(raw)) {
     timelines[name] = clampToRange(segs, clampStart, clampEnd);
   }
+
+  auditWindowTriggers(timelines, triggerWhitelist, trace);
 
   const fields = {};
   // ─────────────────────────────────────────────────────────────────────────
@@ -163,7 +217,10 @@ export function assembleState({
   const pointChanges = {};        // point 模式的明细，仅 debug 时下发
   for (const [name, segs] of Object.entries(timelines)) {
     const cfg = fieldsConfig[name] || {};
-    metaOf[name] = { kind: cfg.KIND ?? "scalar", apply: applyOverride || cfg.APPLY || "on_change" };
+    // channel: 通道也是 token 不是写死的枚举（Ivan 2026-07-28）。手机端
+    // `Set [变量] volume to` 支持喂变量，token→本机名走 resolve.volume_channel。
+    // 于是将来加 ringtone_volume 只是配置里多一个字段，手机端一个动作都不用改。
+    metaOf[name] = { kind: cfg.KIND ?? "scalar", ...(cfg.CHANNEL ? { channel: cfg.CHANNEL } : {}) };
     // 恒常作用域守卫（整个字段永远适用）；时点作用域守卫在值内，由 extractGuards 取出
     let alwaysRaw = cfg.GUARDS_ALWAYS;
     if (!Array.isArray(alwaysRaw) && Array.isArray(cfg.GUARDS)) {
@@ -176,14 +233,17 @@ export function assembleState({
                  .map((g) => expandGuard(g, resolve, trace, name)) : [];
 
     if (mode === "point") {
-      pointChanges[name] = samplePoint(segs, at, tolerances).map((c) => {
+      pointChanges[name] = samplePoint(segs, at, { ...tolerances, impulse: cfg.SHAPE === "impulse" }).map((c) => {
         const { value, guards } = extractGuards(c.value, trace);
         return { ...c, value, guards };
       });
     } else {
-      const seg = sampleSegment(segs, at);                   // { value, from }
+      // 段查询只看 level: 脉冲是过去发生过的事件，不构成"此刻的主张"
+      const seg = sampleSegment(levelsOnly(segs), at);        // { value, from }
+      if (seg.from === null) continue;                        // 此刻无主张 → 字段缺席
+      const eff = applyFor(cfg, seg, applyOverride);
       const { value, guards } = extractGuards(seg.value, trace);
-      fields[name] = { ...metaOf[name], value: boolToken(value), from: seg.from };
+      fields[name] = { ...metaOf[name], apply: eff, value: boolToken(value), from: seg.from };
       const all = [...guards.map((g) => expandGuard(g, resolve, trace, name)), ...alwaysGuards[name]];
       if (all.length) fields[name].guards = all;
     }
@@ -202,7 +262,8 @@ export function assembleState({
     for (const name of Object.keys(metaOf)) {
       const hit = best ? pointChanges[name].find((c) => c.at === best) : null;
       if (!hit) continue;                                    // 此刻无指令 → 字段缺席
-      fields[name] = { ...metaOf[name], value: boolToken(hit.value), from: hit.at };
+      const eff = applyFor(fieldsConfig[name] || {}, { from: hit.at, apply: hit.apply }, applyOverride);
+      fields[name] = { ...metaOf[name], apply: eff, value: boolToken(hit.value), from: hit.at };
       const all = [...(hit.guards || []).map((g) => expandGuard(g, resolve, trace, name)), ...alwaysGuards[name]];
       if (all.length) fields[name].guards = all;
       if (debug) fields[name].changes = pointChanges[name];   // 明细仅诊断用，手机端不读

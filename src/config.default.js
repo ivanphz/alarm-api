@@ -22,6 +22,47 @@
 // ★ 改时刻请去 config.user.js 覆盖 DND.<键>，并同步覆盖 DND.WHITELIST 与
 //   V2.FIELDS.focus.OWN 的对应键（用户层没有本常量，只能写字面量）。
 // ─────────────────────────────────────────────────────────────────────────────
+// 晨间"迟到边界": 再晚就归人管。ZONES.MORNING.end 与 focus 晨间解除窗口终点共用。
+// ⚠️ 在 config.user.js 里改了 ZONES.MORNING.end，必须同步改 FIELDS.focus.SHAPE_AT
+//    里晨间那条的 until（用户层没有本常量，只能写字面量）。规则表阶段会自动派生。
+const MORNING_LATE_EDGE = "08:00";
+
+// 起床闹钟响完多久解除 focus/silent/volume（Ivan 2026-07-29: 10 或 20 分钟）。
+// 太短会在你还没起来时就放开通知；太长则起床后一段时间仍被静音挡着。
+const WAKE_RELEASE_OFFSET = 20;
+// 解除窗口长度（有界电平）: 漏发的补救期。必须 ≥ 2×PUSH.SWEEP_MINUTES，
+// 否则兜底扫描可能一次都扫不到它（审计会喊）。
+const RELEASE_WINDOW_MINUTES = 50;
+
+// ── 三个字段共用的晨/夜骨架 ──────────────────────────────────────────────────
+// focus / silent / media_volume 的【时刻与日型条件完全一样】，只有值和判据不同。
+// 抽成函数 = 改晨间锚点或日型分支时改一处全跟；各字段的差异留在参数里，一眼可见。
+//   onValue   进入安静时的值（focus 用 "on"，silent 用 "on"，音量用 0）
+//   offValue  解除时的值（音量解除是"无主张"，所以传 null）
+//   extra     该字段独有的东西（守卫、preset…）
+function quietShape({ onValue, offValue, apply = "if_changed", releaseApply = "always",
+                      onExtra = {}, offExtra = {} }) {
+  const anchored = { from: "wake_alarms", pick: "last_wake",
+                     offset: WAKE_RELEASE_OFFSET, fallback: DND_TIMES.MORNING_OFF_WORKDAY };
+  return {
+    [DND_TIMES.NIGHT_ON_WORKDAY_EVE]:
+      { when: { eve: ["workday"] }, value: onValue, shape: "level", apply, ...onExtra },
+    [DND_TIMES.NIGHT_ON_REST_EVE]:
+      { when: { eve: ["rest"] }, value: onValue, shape: "level", apply, ...onExtra },
+    "@morning_release": [
+      { when: { morning: ["work", "leave_short"] }, at: anchored, value: offValue,
+        shape: "level", until: { offset: RELEASE_WINDOW_MINUTES }, apply: releaseApply, ...offExtra },
+      { when: { morning: ["leave_long_tail"] }, at: anchored, value: null,
+        shape: "level", apply: releaseApply },
+    ],
+    [DND_TIMES.MORNING_OFF_WEEKEND]: [
+      { when: { morning: ["rest_short"] }, value: offValue, shape: "level",
+        until: { offset: RELEASE_WINDOW_MINUTES }, apply: releaseApply, ...offExtra },
+      { when: { morning: ["rest_long"] }, value: null, shape: "level", apply: releaseApply },
+    ],
+  };
+}
+
 const DND_TIMES = {
   NIGHT_ON_WORKDAY_EVE: "20:55",   // 明天上班 → 今晚提前静音
   NIGHT_ON_REST_EVE:    "22:25",   // 明天休息 → 今晚晚点静音
@@ -201,8 +242,50 @@ export const DEFAULT_CONFIG = {
   //   傍晚: 事件结束时间 > EVENING.start        → 关下班铃
   //   全天事件（无具体时分）= 三区全部命中
   // ───────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔔 门铃（服务端唯一的主动入口，ATOMIC-RULES §3 / CHANNELS §4）
+  //    cron 每 SWEEP_MINUTES 分钟扫一次，把【没有刺客覆盖】的边界推给手机来取。
+  //    典型对象: 有界电平的窗口终点、出差日按日历算出的动态解除时刻。
+  //    ⚠️ BARK_KEY 走环境变量，不要写进配置文件（泄露最坏 = 骚扰门铃，但也别泄露）。
+  // ───────────────────────────────────────────────────────────────────────────
+  PUSH: {
+    ENABLED: true,
+    DRIVER: "bark",
+    BASE_URL: "https://api.day.app",   // 自托管改这里
+    GROUP: "alarm-api",
+    LEVEL: "active",                   // ★ 零打扰仍触发自动化（台账 B1）。别改成 critical
+    KEYWORD: "|SYNCALL|",              // ★ 带分隔符: contains 是子串匹配（铁则5）
+    SWEEP_MINUTES: 5,                  // 与 wrangler.toml 的 cron 间隔保持一致
+    // ★ 双端分工: 主力是你自己的服务器（拉 /sweep/plan 做秒级调度，到点调
+    //   /sweep?at=<时刻>）；Worker 的 cron 只当兜底。LAG 让 cron 滞后一个安全期，
+    //   服务器正常工作时它扫到的永远是空。没有服务器就把 LAG 设 0，cron 变主力。
+    LAG_MINUTES: 10,
+    // ★ 计划推送: Worker 每轮 cron 把未来 HOURS 小时的门铃时刻表【主动 POST】给你的
+    //   服务器，服务器只接收、从不轮询，本地起秒级定时器，到点调 /sweep?at=<时刻>。
+    //   全量推送 + version 指纹: 服务器比对 version，没变就不用重排定时器。
+    //   URL 建议走环境变量 PLAN_WEBHOOK（配置文件里留空即用环境变量）。
+    PLAN: { WEBHOOK_URL: "", HOURS: 24 },
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 📊 手机端埋点总入口（2026-07-31）
+  //    随信封下发，服务端一改全跟 —— 稳定之后 ENABLED 改 false，手机端整段跳过，
+  //    不再产生本地垃圾数据，且不用进快捷指令编辑器改任何东西。
+  //    ⚠️ 手机端必须有【本地默认值】: GET 失败时拿不到本节，而那恰恰是最该记录的一次。
+  // ───────────────────────────────────────────────────────────────────────────
+  TELEMETRY: {
+    ENABLED: true,
+    // 写法: "intent" = 每步【动手之前】先记它要干什么（被杀时最后一行即凶手）
+    //       "result" = 每步做完记结果（省一半写入，但超时那次什么都留不下）
+    MODE: "intent",
+    // 单轮总耗时超过这个毫秒数 → 该轮标记为 slow，便于事后筛
+    SLOW_MS: 15000,
+    // 本地留存天数（手机端按天分文件，过期的自己清）
+    KEEP_DAYS: 7,
+  },
+
   ZONES: {
-    MORNING: { start: "06:00", end: "08:00" },
+    MORNING: { start: "06:00", end: MORNING_LATE_EDGE },
     NOON:    { start: "12:15", end: "13:15" },
     EVENING: { start: "15:59", end: "17:30" }
   },
@@ -328,56 +411,77 @@ export const DEFAULT_CONFIG = {
     DEFAULT: false,                       // true = 根路径默认走 v2（迁移完成后手动翻转）
     FIELDS: {
       focus: {
-        KIND: "focus", USE: "quiet", APPLY: "on_change",
-        PRESET: "sleep",             // ★ 缺省专注模式 = 夜间挡（token，不是显示名）
-                                     //   token→本机名候选表在 edge/resolve.js，按 ?locales= 下发
-                                     //   ⬇ 午间那两个边界在 OWN 里换成 do_not_disturb
-        // ── 时点作用域守卫：只在这些边界生效（恒常守卫写 GUARDS_ALWAYS）──
-        //    语义：只有【当前确实是 sleep】才动 focus。
-        //    保护的是"你手动开了别的专注（工作/驾驶/自定义）"这种情况 —— 不该被早间解除误杀（契约3）。
-        //    only_if_current 是单值语法糖，服务端翻译成
-        //      { source:"current_focus", op:"in", value:["sleep"], match:[本机名...] }
-        //    要多值就直接写完整语法：guards: [{source:"current_focus", op:"in", value:["sleep","do_not_disturb"]}]
-        // ── OWN: 焊在订阅边界同刻 = 合并微调（挂守卫 / 换 preset），动作缺省继承规则 ──
-        //    ★ 夜/昼两挡（Ivan 2026-07-27）: 晚上睡觉开【睡眠】，白天午休开【勿扰】。
-        //      同一条 quiet 规则、同一批边界，只是不同时刻要求不同的专注挡位 ——
-        //      这正是 OWN "换 preset" 的用法（HORIZON §6.5 路线①/②之外的最小解，
-        //      手机端零改动: ApplyFocus 本就按 value.preset 查候选名开专注）。
-        //    ★ 只在【规则真的在该时刻产了边界】时才生效: 周末没有午间键 → 这两行自动失效
-        //      （无 action 无 switch_to = 无事可做，不产生幻影边界）。
-        OWN: {
-          // ── 开启侧: 不打破你手动开的现场（Ivan 2026-07-27）──────────────────
-          //   in:["none", 目标挡] = 【当前没专注】或【已经是目标挡】才动手。
-          //   手动开了勿扰/工作/驾驶/自建专注 → 整条让路，这一晚不进睡眠。
-          //   为什么把目标挡自己也列进去: 你 20:00 手动开了睡眠，20:55 若被拦，
-          //   la_focus 不落账 → 第二天 07:40 的解除会被判"没变"而永不点火 → 睡眠挂一整天。
-          //   列进去则照常执行一次（Set Focus 幂等）并落账，晨间解除照常。
-          //   被拦不是永久失败: SKIP 不落账，下一次轮询(每小时)会重试，开车结束即自动补上。
-          [DND_TIMES.NIGHT_ON_WORKDAY_EVE]: { only_if_current: ["none", "sleep"] },
-          [DND_TIMES.NIGHT_ON_REST_EVE]:    { only_if_current: ["none", "sleep"] },
-          // ── 解除侧: 只解除本挡，别人的现场不碰 ─────────────────────────────
-          [DND_TIMES.MORNING_OFF_WORKDAY]: { only_if_current: "sleep" },  // 工作日早间解除睡眠
-          [DND_TIMES.MORNING_OFF_WEEKEND]: { only_if_current: "sleep" },  // 周末早间解除睡眠
-          // 午休: 白天不开睡眠（睡眠会压低屏幕/进睡眠界面，且与就寝日程纠缠），改开勿扰
-          [DND_TIMES.NOON_ON]:  { preset: "do_not_disturb",
-                                  only_if_current: ["none", "do_not_disturb"] },
-          // 午休解除: 对称守卫 —— 只有当前确实是勿扰才关，护住你手动开的工作/驾驶专注。
-          // ⚠️ 守卫依赖 ?locales= 展开本机名: URL 丢了 locales → match 空 → in 永远拦截
-          //    → 午休后不解除。现在这种情况会在 trace 里响亮告警（edge/assemble.js）。
-          //    不想要这层保护就把 only_if_current 删掉（action 仍继承规则的 off）。
-          [DND_TIMES.NOON_OFF]: { preset: "do_not_disturb", only_if_current: "do_not_disturb" },
+        KIND: "focus",               // ★ 第③步起不再订阅 quiet: 值由 (触发因, 日型) 直接给
+        PRESET: "sleep",             // 缺省专注挡（token，不是显示名；本机名表在 edge/resolve.js）
+        SHAPE: "level",              // 缺省形状
+        APPLY: "if_changed",         // 缺省判据
+
+        // ── RULES: 一个边界一行，规格不再散在四张表里（ATOMIC-RULES §5.2）──────
+        //  一行读完 = 这一刻做什么、主张多久、凭什么动手、什么情况下让路。
+        //  省略 value = 继承 quiet 在该时刻的动作（on/off）。
+        //
+        //  夜间  level + if_changed  持续主张；la 区分"你手动关掉的"与"我没开成"
+        //                            → 半夜你关掉睡眠不会被重开；20:55 被拦则会补开
+        //  晨间  有界电平 + always    窗口内任何一次调用都能补上漏掉的解除；
+        //                            窗口一过自动撤销主张 → 白天手动小睡不被误伤
+        //  午休  pulse + always       一次性事件，段查询看不见；漏了无关痛痒
+        //
+        //  守卫 guard 是 only_if_current 的糖: "none"=当前没有任何专注（Get Current
+        //  Focus 返回空，Ivan 实测确认）。要多值写数组，要完整语法写 guards。
+        RULES: {
+          ...quietShape({
+            onValue: "on", offValue: "off",
+            onExtra:  { guard: "none" },   // 手动开着任何专注就让路，不打破现场
+            offExtra: { guard: "sleep" },  // 只解除睡眠，别人的现场不碰
+          }),
+          // 午休: 开勿扰而不是睡眠（睡眠会压屏并与就寝日程纠缠），一次性事件
+          [DND_TIMES.NOON_ON]:
+            { when: { noon: ["work"] }, value: "on", shape: "pulse",
+              apply: "always", preset: "do_not_disturb" },
+          [DND_TIMES.NOON_OFF]:
+            { when: { noon: ["work"] }, value: "off", shape: "pulse",
+              apply: "always", preset: "do_not_disturb" },
         },
       },
-      silent: { KIND: "scalar", USE: "quiet", SKIP: ["12:15", "13:29"], APPLY: "on_change", OWN: {} },
+
+      // silent: 读不回来的字段 → 只能靠 la（if_changed）。午间【不参与】——
+      //   午休静音靠 focus 的勿扰挡就够，系统静音开关来回拨反而容易和手动操作打架。
+      silent: {
+        KIND: "scalar", APPLY: "if_changed",
+        RULES: quietShape({ onValue: "on", offValue: "off" }),
+      },
       media_volume: {
-        KIND: "scalar", USE: "quiet", APPLY: "on_change",
-        MAP: { on: 0, off: null },   // 该安静→归零(每次进入重申); 解除→无主张(白天音量归人管)
-        OWN: {},                     // 单位: 整数 0–100（契约§5）。契约15: 订阅声明取代抄数字
+        KIND: "scalar", APPLY: "if_changed",
+        CHANNEL: "media",            // ★ 通道 token（本机名走 resolve.volume_channel）
+                                     //   加铃声音量 = 复制本字段、CHANNEL 改 "ringtone"、
+                                     //   订阅换一条规则。手机端零改动。
+        // 单位: 整数 0–100（契约§5）。进入安静→归零；解除→无主张（白天音量归人管）。
+        // 午间跟 focus 一起走脉冲: 12:15 归零、13:29 交还。
+        RULES: {
+          ...quietShape({ onValue: 0, offValue: null }),
+          [DND_TIMES.NOON_ON]:  { when: { noon: ["work"] }, value: 0,
+                                  shape: "pulse", apply: "always" },
+          [DND_TIMES.NOON_OFF]: { when: { noon: ["work"] }, value: null,
+                                  shape: "pulse", apply: "always" },
+        },
         // 【恒常作用域守卫】整个字段永远适用(时点守卫写在 OWN 的值内)。取消注释即启用:
         //   导航/视频/音乐 App 前台时不归零音量 —— 值是【语义 token】, 绝不写包名,
         //   token→本平台标识的解析表在 edge/resolve.js, 按 ?platform= 下发(契约: 零平台字符串)
         // GUARDS_ALWAYS: [{ source: "app", op: "not_in", value: ["maps", "video", "music"] }],
       },
+      // ── 铃声音量（通道抽象的第二个消费者）──────────────────────────────
+      //   通道是 token 不是写死的枚举，所以加它只是复制上面那个字段、改 CHANNEL。
+      //   ⚠️ 但【手机端不是零改动】: SyncAll 按字段名分派，ApplyVolume 里写死了
+      //      media_volume（PHONE §6 V-a）。要启用得在手机上复制一份 ApplyVolume、
+      //      把字段名改成 ringtone_volume —— 通道靠信封的 channel 走变量，那部分不用改。
+      //   只是想【换】通道（媒体→铃声）而不是新增: 直接改上面 media_volume 的
+      //      CHANNEL 即可，那才是真的手机端零改动。
+      //   默认关闭: 打开前先在手机上把指令备好，否则字段下发了没人处理。
+      // ringtone_volume: {
+      //   KIND: "scalar", APPLY: "if_changed", CHANNEL: "ringtone",
+      //   RULES: quietShape({ onValue: 20, offValue: null }),   // 夜里压到 20，白天归人管
+      // },
+
       // cadence.<task> 字段由 CADENCE.TASKS 自动派生（见 withCadenceFields），此处不写死
     },
     // 设备自报平台（?platform=）缺省值。服务端【不维护】"哪台设备是什么平台"的注册表——

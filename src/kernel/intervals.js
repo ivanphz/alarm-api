@@ -99,15 +99,28 @@ export function validate(segments) {
 
 // ── 归一化 ───────────────────────────────────────────────────────────────────
 // 排序 + 相邻同值合并（契约8）。合并保留首段的附加键（reason 等）。
+// 形状感知（ATOMIC-RULES §2.1.1）: "同值=没变化"是【电平】语义，对脉冲不成立 ——
+// 今晚 22:25 的 on 不是昨晚那个 on，合并掉就等于当晚刺客查无此边界。
+// 无 shape 字段的输入（schedule 世界）行为与从前逐字节一致。
 export function normalize(segments) {
   const sorted = [...segments].sort((a, b) => cmp(a.from, b.from));
   const out = [];
+  let lastLevel = null;                       // 只在 level 之间比较同值
   for (const seg of sorted) {
-    const last = out[out.length - 1];
-    if (last && valueEquals(last.value, seg.value)) continue;
-    out.push({ ...seg });
+    if (seg.shape === "pulse") { out.push({ ...seg }); continue; }   // 脉冲永不合并
+    if (lastLevel && valueEquals(lastLevel.value, seg.value)) continue;
+    const kept = { ...seg };
+    out.push(kept);
+    lastLevel = kept;
   }
   return out;
+}
+
+/** 段查询只看 level（脉冲不构成"当前主张"）。无 shape 的输入原样返回。 */
+export function levelsOnly(segments) {
+  return segments.some((s) => s.shape === "pulse")
+    ? segments.filter((s) => s.shape !== "pulse")
+    : segments;
 }
 
 // ── segment 采样 ─────────────────────────────────────────────────────────────
@@ -121,7 +134,10 @@ export function sampleSegment(segments, at) {
     else hi = mid - 1;
   }
   if (hit === -1) return { value: null, from: null };
-  return { value: segments[hit].value, from: segments[hit].from };
+  const seg = segments[hit];
+  const out = { value: seg.value, from: seg.from };
+  if (seg.apply) out.apply = seg.apply;                    // 判据随边界走（规则路径）
+  return out;
 }
 
 // ── point 采样 ───────────────────────────────────────────────────────────────
@@ -135,10 +151,15 @@ export function samplePoint(segments, at, { pastMinutes = 3, futureMinutes = 3 }
   let previous = null;
   for (const seg of segments) {
     if (cmp(seg.from, hi) > 0) break;
-    if (cmp(seg.from, lo) >= 0 && !valueEquals(seg.value, previous)) {
-      hits.push({ at: seg.from, value: seg.value, previous });
+    // 脉冲 = 独立事件，恒命中；电平仍按"值变了才算边界"
+    if (cmp(seg.from, lo) >= 0 &&
+        (seg.shape === "pulse" || !valueEquals(seg.value, previous))) {
+      const hit = { at: seg.from, value: seg.value, previous };
+      if (seg.shape === "pulse") hit.shape = "pulse";
+      if (seg.apply) hit.apply = seg.apply;                // 判据随边界走（规则路径）
+      hits.push(hit);
     }
-    previous = seg.value;
+    if (seg.shape !== "pulse") previous = seg.value;
   }
   return hits;
 }
@@ -148,7 +169,9 @@ export function samplePoint(segments, at, { pastMinutes = 3, futureMinutes = 3 }
 // 这是 LOOKBACK 机制的正式替代：范围外的历史由锚定段一格承载。
 export function clampToRange(segments, startAt, endAt) {
   const out = [];
-  const anchor = sampleSegment(segments, startAt);
+  // 锚定是【电平】的跨界延续；脉冲发生过就过去了，不漫过窗口起点，故锚定只看 level
+  const levels = levelsOnly(segments);
+  const anchor = sampleSegment(levels, startAt);
   if (anchor.from !== null && cmp(anchor.from, startAt) < 0) {
     out.push({ from: startAt, value: anchor.value });
   }

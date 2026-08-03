@@ -116,10 +116,11 @@ test("R1 上帝模式: 当日完全接管（闹钟集合与 quiet 全按 JSON）
   assert.ok(!on(b, "GateFix-SchoolBreak-WakeUp-Vib"));     // 常规 R2.1 被旁路
   assert.ok(!on(b, "GateFix-Workday-NapEnd-Vib"));         // god 没给 → off
   assert.ok(b.alarms.dynamic.some((a) => a.label === "GateDyn-Event-0611"));
-  const q = b.schedules.quiet.filter((s) => s.from.startsWith("2026-07-15"));
-  assert.deepEqual(q, [
-    { from: "2026-07-15 06:00", value: "off" },
-    { from: "2026-07-15 21:00", value: "on" },
+  // quiet 已退役 → 直接看 god 对字段的效果（规则路径的 god 分支照旧整日接管）
+  const f = b.field_timelines.focus.filter((s) => s.from.startsWith("2026-07-15"));
+  assert.deepEqual(f.map((s) => [s.from.slice(11), s.value === null ? null : s.value.action]), [
+    ["06:00", "off"],
+    ["21:00", "on"],
   ]);
 });
 
@@ -136,9 +137,9 @@ test("外部闹钟: 时区换算跨天 + uid 编入标签 + 窗口裁剪", async
     [{ label: "GateDyn-ES-hsbc-bill-77-0630", at: "2026-07-16 06:30", reason: "repay" }]);
 });
 
-test("audit: quiet 边界白名单一致性告警可见", async () => {
-  // 06:07 off 相对前夜 on 是真变化(保留)；纯同值边界(如 21:03 on 接 20:55 on)会被
-  // 归一化合并吃掉、审计不可见 —— 那是 level 语义的正确行为，不是漏报。
+test("audit: 白名单外的边界被标出（quiet 退役后由 needs_doorbell 承担）", async () => {
+  // 原先由 auditQuietWhitelist 做，quiet 退役后改由 assemble 的 needs_doorbell 承担，
+  // 而且覆盖面更大: 它查【所有字段的所有边界】，不再局限于 quiet 这一条规则。
   const god = JSON.stringify({ dnd_schedule: { "06:07": "OFF", "21:03": "ON" } });
   const ld = loaders({ async loadCalendars(env, opts, span) {
     const s = await import("../../src/edge/sources.js");
@@ -147,7 +148,8 @@ test("audit: quiet 边界白名单一致性告警可见", async () => {
       span.start, span.end);
   } });
   const b = await call("date=2026-07-15&now=05:00", ld);
-  assert.ok(b.trace.some((t) => t.includes("quiet_boundary_off_whitelist") && t.includes("21:03")));
+  assert.ok(b.trace.some((t) => t.includes("needs_doorbell") && t.includes("06:07")),
+    "god 给的 06:07 不在刺客白名单里，必须被标出来依赖门铃");
 });
 
 test("R1 智能标点容错: iOS 弯引号/全角冒号的 god JSON 照常解析", async () => {
@@ -163,7 +165,8 @@ test("R1 智能标点容错: iOS 弯引号/全角冒号的 god JSON 照常解析
   } });
   const b = await call("date=2026-07-15&now=05:00&debug=1", ld);
   assert.ok(on(b, "GateFix-Workday-WakeUp-Vib"));             // 容错后 god 生效
-  assert.ok(b.schedules.quiet.some((s) => s.from === "2026-07-15 06:00" && s.value === "off"));
+  assert.ok(b.field_timelines.focus.some(
+    (s) => s.from === "2026-07-15 06:00" && s.value && s.value.action === "off"));
 });
 
 test("R1 大字报: 真非法 JSON → 回落常规 + trace 定位错误", async () => {
@@ -201,5 +204,6 @@ test("R1 真实 ICS 转义链路: RFC5545 的 \\, \\n 反转义后 god JSON 复�
   const b = await call("date=2026-07-15&now=05:00&debug=1", ld);
   assert.ok(!b.trace.some((t) => t.includes("god_json_invalid")));
   assert.ok(on(b, "GateFix-Workday-WakeUp-Vib"));            // god 接管生效
-  assert.ok(b.schedules.quiet.some((s) => s.from === "2026-07-15 06:00" && s.value === "off"));
+  assert.ok(b.field_timelines.focus.some(
+    (s) => s.from === "2026-07-15 06:00" && s.value && s.value.action === "off"));
 });

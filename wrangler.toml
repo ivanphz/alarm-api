@@ -11,3 +11,13 @@ keep_vars = true
 # [[kv_namespaces]]
 # binding = "FACTS_KV"
 # id = "<namespace id>"
+
+# ==============================================================================
+# 🔔 门铃扫描（原子化第④步）
+#   服务端平时只被动响应请求；主动性全靠这个 cron。
+#   每 5 分钟扫一次「没有刺客覆盖的边界」，有就推一条 Bark active 门铃。
+#   间隔改这里要同步改 config 的 PUSH.SWEEP_MINUTES（两者必须一致，否则会漏扫或重扫）。
+#   Bark key 用 secret 注入: npx wrangler secret put BARK_KEY
+# ==============================================================================
+[triggers]
+crons = ["*/5 * * * *"]

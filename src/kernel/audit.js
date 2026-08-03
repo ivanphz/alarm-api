@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // 纯诊断零副作用。诊断总是携带 summary/reason（沿袭 calendar-api 治理层纪律）。
 //   ① 字段订阅: 孤儿 schedule（无人订阅→其产生逻辑可安全删）/ 悬空 USE
-//   ② quiet 边界白名单: 边界墙钟 ∉ DND.WHITELIST → 手机刺客自动化不存在，warn
+//   ② （原 quiet 边界白名单审计已于 2026-07-29 随 quiet 退役移除；
+//      更强的替代在 edge/assemble.js 的 needs_doorbell —— 它查所有字段的所有边界）
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { feedsOf, FEEDS_DEFAULT, FEEDS_KNOWN } from "./registry.js";
@@ -37,19 +38,6 @@ export function auditFieldSubscriptions(fieldsConfig, schedules, trace, plugins)
       trace.push({ level: "warn", plugin: "audit", ref: "orphan_schedule",
         msg: `schedule "${p}" 无字段订阅（孤儿，其产生逻辑可安全删除）；` +
              `若它本就不喂字段，请在插件里声明 feeds: "alarms"/"todos"/"plugins"` });
-    }
-  }
-}
-
-export function auditQuietWhitelist(quietSegments, whitelist, trace) {
-  if (!Array.isArray(whitelist) || whitelist.length === 0) return;
-  const allow = new Set(whitelist);
-  for (const seg of quietSegments || []) {
-    const hm = seg.from.slice(11);
-    if (!allow.has(hm)) {
-      trace.push({ level: "warn", plugin: "audit", ref: "quiet_boundary_off_whitelist",
-        msg: `quiet 边界 ${seg.from} 不在 DND.WHITELIST 内 —— point 刺客无此自动化将漏触发；` +
-             `segment 轮询不受影响。请补自动化或检查规则` });
     }
   }
 }

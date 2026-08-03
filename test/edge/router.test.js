@@ -1,7 +1,7 @@
 // test/edge/router.test.js — /v2 端到端 HTTP（注入假 loader，无网络）
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleV2 } from "../../src/edge/router.js";
+import { handleV2, handleFact } from "../../src/edge/router.js";
 import { addDays } from "../../src/kernel/intervals.js";
 
 function fakeLoaders() {
@@ -27,7 +27,7 @@ test("e2e: 鉴权关闭时段采样，信封齐全（AUTH_DISABLED=true 来自 c
   const body = await res.json();
   assert.equal(body.version, "2");
   assert.equal(body.fields.silent.value, "on");                 // 正典: 昨夜静音延续
-  assert.equal(body.fields.focus.value.preset, "sleep"); // token，永无本地化名
+  assert.equal(body.fields.focus.value.preset, "sleep");        // token，永无本地化名
   assert.equal(body.fields.media_volume.value, 0);              // 订阅 quiet: 夜间安静→归零
 });
 
@@ -38,18 +38,21 @@ test("契约15: media_volume 订阅 quiet——安静归零, 解除无主张(白
   assert.equal(night.fields.media_volume.value, 0);
   assert.equal(night.fields.media_volume.from, "2026-07-15 20:55");  // 归因: 来自 quiet 边界
 });
-async function call_mv(now) {
-  const res = await handleV2(req(`date=2026-07-15&now=${now}`), {}, "/state", fakeLoaders());
+async function call_mv(now, extra = "") {
+  const res = await handleV2(req(`date=2026-07-15&now=${now}${extra}`), {}, "/state", fakeLoaders());
   return res.json();
 }
 
 test("对拍回归: focus 07:40 守卫继承 + reminder 不再误报孤儿", async () => {
-  const b = await call_mv("08:00");
+  const b = await call_mv("07:44", "&mode=point");   // focus 现在只在刺客时刻在场
   // only_if_current 已翻译成统一 guards（手机只认 guards），原字段不再出现
   assert.equal(b.fields.focus.value.only_if_current, undefined);
   assert.equal(b.fields.focus.value.guards, undefined);          // 不在 value 内
-  assert.deepEqual(b.fields.focus.guards,                        // 在字段级
-    [{ source: "current_focus", op: "in", value: ["sleep"], match: [] }]);  // is→in 单元素
+  assert.equal(b.fields.focus.guards.length, 1);                 // 在字段级
+  assert.equal(b.fields.focus.guards[0].source, "current_focus");
+  assert.equal(b.fields.focus.guards[0].op, "in");                // is→in 单元素
+  assert.deepEqual(b.fields.focus.guards[0].value, ["sleep"]);
+  assert.ok(b.fields.focus.guards[0].match.includes("睡眠"));      // 缺 locales → 全语言兜底
   assert.equal(b.fields.focus.value.action, "off");
   assert.ok(!b.trace.some((x) => x.includes("orphan") && x.includes("cadence_ai_claude_reminder")));
 });
@@ -63,20 +66,22 @@ test("e2e: point 模式命中 07:40 边界", async () => {
 test("resolve 下发: 表名=守卫source名; locked 恒等表恒发", async () => {
   const r1 = await handleV2(req("date=2026-07-15&locales=zh,en"), {}, "/state", fakeLoaders());
   const b1 = await r1.json();
-  assert.deepEqual(b1.resolve.current_focus.sleep, ["睡眠", "Sleep"]);
+  assert.deepEqual(b1.resolve.current_focus.sleep.slice(0, 2), ["睡眠", "Sleep"]);
   assert.deepEqual(b1.resolve.locked, { true: ["true"], false: ["false"] });
   assert.ok(!("i18n" in b1));                          // 旧 i18n 节已彻底删除
 
   const r2 = await handleV2(req("date=2026-07-15"), {}, "/state", fakeLoaders());
   const b2 = await r2.json();
-  assert.equal(b2.resolve.current_focus, undefined);   // 不传 locales 就没有语言表
-  assert.ok(b2.resolve.locked);                        // 但恒等表照发
+  // 不传 locales → 全语言兜底（不再缺席），并附降级告警（2026-07-31）
+  assert.ok(b2.resolve.current_focus.sleep.includes("睡眠"));
+  assert.ok(b2.trace.some((x) => x.includes("locales_fallback")));
+  assert.ok(b2.resolve.locked);                        // 恒等表照发
 });
 
 test("e2e: /timeline 常开 debug 内脏", async () => {
   const res = await handleV2(req("date=2026-07-15"), {}, "/timeline", fakeLoaders());
   const body = await res.json();
-  assert.ok(Array.isArray(body.schedules.quiet));
+  assert.ok(Array.isArray(body.schedules.day_type));   // quiet 已退役
   assert.ok(Array.isArray(body.field_timelines.silent));
 });
 
@@ -158,10 +163,11 @@ test("★回归(真bug): 降级信封【绝不能】带 alarms 节 —— 否则
 });
 
 test("?apply=enforce: 强制推平全部字段（守卫仍然拦得住）", async () => {
-  const norm = await (await handleV2(req("date=2026-07-15&now=08:00"), {}, "/state", fakeLoaders())).json();
+  // 取夜间段采样: 那里 silent 是 if_changed，才看得出 enforce 覆盖的效果
+  const norm = await (await handleV2(req("date=2026-07-15&now=21:00"), {}, "/state", fakeLoaders())).json();
   assert.equal(norm.fields.silent.apply, "on_change");
 
-  const forced = await (await handleV2(req("date=2026-07-15&now=08:00&apply=enforce"), {}, "/state", fakeLoaders())).json();
+  const forced = await (await handleV2(req("date=2026-07-15&now=21:00&apply=enforce"), {}, "/state", fakeLoaders())).json();
   for (const f of Object.values(forced.fields)) assert.equal(f.apply, "enforce");
   // 守卫原样下发 —— enforce 只压"无变化跳过"，压不过守卫（契约3）
   assert.deepEqual(forced.fields.focus.guards, norm.fields.focus.guards);
@@ -191,4 +197,64 @@ test("★fail-closed: 手机端判 `is true`，任何非 true 值都不该 sweep
     const b = await (await handleV2(req(qs), {}, "/state", fakeLoaders())).json();
     assert.ok(["true", "false"].includes(b.alarms.sweep), `sweep=${b.alarms.sweep} 不在枚举内`);
   }
+});
+
+// ── 批量回传（Ivan 2026-07-29: 下发一次连接，回传也该一次）────────────────────
+test("/v2/fact 批量: 一次 POST 收多条，按 stream 分组只写一次 KV", async () => {
+  const store = new Map();
+  let puts = 0;
+  const env = { FACTS_KV: {
+    async get(k) { return store.get(k) ?? null; },
+    async put(k, v) { puts++; store.set(k, v); },
+  } };
+  const post = (body) => handleFact(new Request("https://x/v2/fact?device=d", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+
+  const res = await post({ events: [
+    { stream: "applied_focus",  at: "2026-07-15 07:44", id: "a1" },
+    { stream: "applied_focus",  at: "2026-07-15 20:55", id: "a2" },
+    { stream: "applied_silent", at: "2026-07-15 20:55", id: "b1" },
+  ] });
+  const b = await res.json();
+  assert.equal(b.ok, true);
+  assert.equal(b.batch, true);
+  assert.equal(b.results.length, 3);
+  assert.equal(puts, 2, "两个 stream 只该写两次 KV，不是三次");
+});
+
+test("批量: 幂等去重逐条报告，坏事件不拖垮好事件", async () => {
+  const store = new Map();
+  const env = { FACTS_KV: { async get(k) { return store.get(k) ?? null; },
+                            async put(k, v) { store.set(k, v); } } };
+  const post = (body) => handleFact(new Request("https://x/v2/fact?device=d", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+
+  await post({ events: [{ stream: "s", at: "2026-07-15 07:44", id: "dup" }] });
+  const b = await (await post({ events: [
+    { stream: "s", at: "2026-07-15 07:44", id: "dup" },        // 重复
+    { stream: "s", at: "2026-07-15 08:00", id: "new" },        // 新的
+    { stream: "s", at: "坏时间", id: "bad" },                   // 非法
+  ] })).json();
+  assert.equal(b.results.find((r) => r.id === "dup").deduped, true);
+  assert.equal(b.results.find((r) => r.id === "new").deduped, false);
+  assert.equal(b.results.find((r) => r.id === "bad").ok, false);
+  assert.equal(b.ok, false, "有坏事件时整体 ok=false，但好的照样落库");
+  assert.equal(JSON.parse(store.get("fact:d:s")).length, 2);
+});
+
+test("反例: 单条老形状继续收（手机端可以慢慢迁）", async () => {
+  const store = new Map();
+  const env = { FACTS_KV: { async get(k) { return store.get(k) ?? null; },
+                            async put(k, v) { store.set(k, v); } } };
+  const res = await handleFact(new Request("https://x/v2/fact?device=d", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stream: "s", at: "2026-07-15 07:44", id: "x1" }),
+  }), env);
+  const b = await res.json();
+  assert.equal(b.ok, true);
+  assert.equal(b.batch, undefined);
 });
