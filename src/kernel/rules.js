@@ -35,7 +35,9 @@ const padHM = (hm) => {
   return `${String(h).padStart(2, "0")}:${String(m ?? "00").padStart(2, "0")}`;
 };
 const SPEC_KEYS = new Set(["at", "when", "value", "preset", "shape", "until", "apply", "guard", "guards", "note"]);
-const WHEN_AXES = new Set(["morning", "noon", "eve"]);      // 日型的三根正交轴（plugins/day-type.js）
+// 日型的四根正交轴（plugins/day-type.js）。加轴要同时改那里和这里 —— 这里是白名单，
+// 写错的轴名会被当场拒绝而不是静默忽略。
+const WHEN_AXES = new Set(["morning", "noon", "eve", "night"]);
 const SHAPES = new Set(["level", "pulse"]);
 const APPLIES = new Set(["always", "if_changed", "if_differs", "enforce", "on_change"]);
 
@@ -66,18 +68,25 @@ function validateSpec(where, spec) {
   // at: 时刻可以是【算出来的】（ATOMIC-RULES §4）
   //   "07:40"                                          字面量
   //   { from:"wake_alarms", pick:"last_wake",           锚定另一条规则的产出
-  //     offset:20, fallback:"07:40" }                   + 偏移分钟 + 取不到时的兜底
+  //     offset:20, not_before:"07:44", fallback:"07:44" }
+  //       offset      偏移分钟
+  //       not_before  【下限】算出来早于它就吸附到它 —— 这样常规日子都落在同一个
+  //                   时刻上，能被固定刺客覆盖，不用门铃（Ivan 2026-07-31）
+  //       fallback    锚点取不到时用（如全天事件、周末没有起床闹钟）
   if (spec.at != null && typeof spec.at !== "string") {
     const a = spec.at;
     if (typeof a !== "object" || Array.isArray(a)) {
       throw new Error(`规则 ${where}: at 要么是 "HH:MM"，要么是 { from, pick, offset?, fallback? }`);
     }
     if (!a.from || !a.pick) throw new Error(`规则 ${where}: at 缺 from / pick`);
+    if (a.not_before && !/^\d{1,2}:\d{2}$/.test(a.not_before)) {
+      throw new Error(`规则 ${where}: at.not_before 必须是 "HH:MM"`);
+    }
     if (a.offset != null && !Number.isFinite(Number(a.offset))) {
       throw new Error(`规则 ${where}: at.offset 必须是数字（分钟）`);
     }
   }
-  // until: 字面量 "HH:MM" 或 { offset: N }（相对 at 偏移，动态时刻场景必须用相对）
+  // until: 字面量 "HH:MM" 或 { offset: N }（相对 at 偏移；动态时刻场景必须用相对）
   if (spec.until != null && typeof spec.until !== "string") {
     const u = spec.until;
     if (typeof u !== "object" || u.offset == null || !Number.isFinite(Number(u.offset))) {

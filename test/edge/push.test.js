@@ -137,19 +137,51 @@ async function sweep(now, opts) {
   } finally { globalThis.fetch = realFetch; }
 }
 
-test("cron 兜底: 滞后窗口扫到解除时刻 07:44（无刺客）→ 按门铃", async () => {
+// ★ 2026-07-31 吸附之后: 常规日子所有边界都落在刺客上 → cron 扫到的是空。
+//   门铃只为【真正动态】的时刻存在（出差日算出来的解除时刻）。
+test("cron 兜底: 常规日子扫不到任何门铃（边界已吸附到刺客）", async () => {
   const { body, sent } = await sweep("2026-07-15 07:54", { lagMinutes: 10 });
   assert.equal(body.ok, true);
   assert.equal(body.lag_minutes, 10);
-  assert.ok(body.pushed.some((d) => d.hm === "07:44"), "锚定出来的解除时刻必须被门铃覆盖");
+  assert.deepEqual(body.pushed, [], "常规日子不该按门铃");
+  assert.equal(sent.length, 0);
+});
+
+test("★ 出差日: 算出来的 08:30 没有刺客 → 门铃按下", async () => {
+  const trip = { ...loaders(),
+    async loadCalendars() {
+      return [{ title: "出差", date: "2026-07-15", start_time: "08:10", end_time: "22:00" }];
+    } };
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u) => { sent.push(u); return new Response("ok"); };
+  let body;
+  try {
+    const res = await handleSweep({ BARK_KEY: "K" }, trip, "2026-07-15 08:40", { lagMinutes: 10 });
+    body = await res.json();
+  } finally { globalThis.fetch = realFetch; }
+  assert.ok(body.pushed.some((d) => d.hm === "08:30"));
   assert.equal(sent.length, 1);
 });
 
 test("★ 服务器精确触发: ?at= 只捡那一刻，不误伤邻近边界", async () => {
-  const hit = await sweep(null, { fromTs: "2026-07-15 07:44", toTs: "2026-07-15 07:44" });
-  assert.ok(hit.body.pushed.every((d) => d.hm === "07:44"));
+  const trip = { ...loaders(),
+    async loadCalendars() {
+      return [{ title: "出差", date: "2026-07-15", start_time: "08:10", end_time: "22:00" }];
+    } };
+  const run = async (at) => {
+    const sent = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (u) => { sent.push(u); return new Response("ok"); };
+    try {
+      const res = await handleSweep({ BARK_KEY: "K" }, trip, null, { fromTs: at, toTs: at });
+      return { body: await res.json(), sent };
+    } finally { globalThis.fetch = realFetch; }
+  };
+  const hit = await run("2026-07-15 08:30");
   assert.ok(hit.body.pushed.length > 0);
-  const miss = await sweep(null, { fromTs: "2026-07-15 07:45", toTs: "2026-07-15 07:45" });
+  assert.ok(hit.body.pushed.every((d) => d.hm === "08:30"));
+  const miss = await run("2026-07-15 08:31");
   assert.deepEqual(miss.body.pushed, []);            // 反例: 差一分钟就不该按
   assert.equal(miss.sent.length, 0);
 });
@@ -167,7 +199,7 @@ test("门铃时刻表: 服务器拉一次就能做秒级调度", async () => {
   );
   const b = await res.json();
   assert.equal(b.ok, true);
-  assert.ok(b.doorbells.some((d) => d.hm === "07:44"), "该给出锚定出来的解除时刻");
+  assert.deepEqual(b.doorbells, [], "常规日子的边界全部吸附到刺客 → 时刻表为空");
   assert.ok(!b.doorbells.some((d) => WHITELIST.includes(d.hm)), "有刺客的时刻不该出现在表里");
 });
 

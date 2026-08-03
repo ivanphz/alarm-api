@@ -92,8 +92,14 @@ function resolveAt(spec, schedules, day) {
   const anchor = src && src[at.pick];
   if (!anchor) return at.fallback ? padHM(at.fallback) : null;
   const off = Number(at.offset || 0);
-  return off ? addMinutes(`${day} ${padHM(anchor)}`, off).slice(11, 16) : padHM(anchor);
+  const hm = off ? addMinutes(`${day} ${padHM(anchor)}`, off).slice(11, 16) : padHM(anchor);
+  // 下限吸附: 算出来早于 not_before 就用 not_before。
+  // 用意是让常规日子都落在同一个时刻，被固定刺客覆盖 —— 只有真正晚于下限的
+  // （如出差 08:30）才成为动态边界、需要门铃。
+  const floor = at.not_before ? padHM(at.not_before) : null;
+  return floor && hm < floor ? floor : hm;
 }
+
 
 function boundariesFromRules(cfg, schedules, range) {
   const boundaries = new Map();

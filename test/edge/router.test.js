@@ -26,17 +26,21 @@ test("e2e: 鉴权关闭时段采样，信封齐全（AUTH_DISABLED=true 来自 c
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.version, "2");
-  assert.equal(body.fields.silent.value, "on");                 // 正典: 昨夜静音延续
-  assert.equal(body.fields.focus.value.preset, "sleep");        // token，永无本地化名
-  assert.equal(body.fields.media_volume.value, 0);              // 订阅 quiet: 夜间安静→归零
+  // 全 pulse 之后段查询无主张 —— 字段缺席才是正确的（白天/夜里都归人管）
+  assert.equal(body.fields.silent, undefined);
+  const pt = await (await handleV2(req("date=2026-07-14&now=20:55&mode=point"), {}, "/state", fakeLoaders())).json();
+  assert.equal(pt.fields.focus.value.preset, "sleep");          // token，永无本地化名
+  assert.equal(pt.fields.media_volume.value, 0);                // 夜间进入安静 → 归零
 });
 
-test("契约15: media_volume 订阅 quiet——安静归零, 解除无主张(白天音量归人管)", async () => {
-  const day = await call_mv("15:00");                            // 午休后~夜前: quiet off
-  assert.equal(day.fields.media_volume.value, null);
-  const night = await call_mv("21:00");                          // 20:55 后: quiet on
-  assert.equal(night.fields.media_volume.value, 0);
-  assert.equal(night.fields.media_volume.from, "2026-07-15 20:55");  // 归因: 来自 quiet 边界
+test("契约15: media_volume 安静归零, 解除无主张(白天音量归人管)", async () => {
+  // 全 pulse 之后只有刺客时刻看得到主张（段查询一律无主张）
+  const night = await call_mv("20:55", "&mode=point");
+  assert.equal(night.fields.media_volume.value, 0);              // 进入安静 → 归零
+  const morning = await call_mv("07:44", "&mode=point");
+  assert.equal(morning.fields.media_volume.value, null);         // 解除 → 无主张
+  const day = await call_mv("15:00");
+  assert.equal(day.fields.media_volume, undefined);              // 白天段查询: 字段缺席
 });
 async function call_mv(now, extra = "") {
   const res = await handleV2(req(`date=2026-07-15&now=${now}${extra}`), {}, "/state", fakeLoaders());
@@ -92,7 +96,8 @@ test("e2e: 虚拟事件全链路——周五全天年假=长假块，周六上�
     req("date=2026-07-18&now=10:30&testEvents=" + encodeURIComponent("[年假]|2026-07-17||") + "&skipCalendar=1"),
     {}, "/state", loaders);
   const body = await res.json();
-  assert.equal(body.fields.silent.value, null);                 // R6.2c 白天释放主张(手动自由)
+  // 长假块的周六上午: 早上不产解除边界（绝不吵醒），段查询也无主张
+  assert.equal(body.fields.silent, undefined);
 });
 
 test("e2e: loader 全炸也返回合法降级信封（宁可不动手机）", async () => {
@@ -163,11 +168,11 @@ test("★回归(真bug): 降级信封【绝不能】带 alarms 节 —— 否则
 });
 
 test("?apply=enforce: 强制推平全部字段（守卫仍然拦得住）", async () => {
-  // 取夜间段采样: 那里 silent 是 if_changed，才看得出 enforce 覆盖的效果
-  const norm = await (await handleV2(req("date=2026-07-15&now=21:00"), {}, "/state", fakeLoaders())).json();
+  const at = (qs) => handleV2(req(qs), {}, "/state", fakeLoaders()).then((r) => r.json());
+  const norm = await at("date=2026-07-15&now=20:55&mode=point");
   assert.equal(norm.fields.silent.apply, "on_change");
 
-  const forced = await (await handleV2(req("date=2026-07-15&now=21:00&apply=enforce"), {}, "/state", fakeLoaders())).json();
+  const forced = await at("date=2026-07-15&now=20:55&mode=point&apply=enforce");
   for (const f of Object.values(forced.fields)) assert.equal(f.apply, "enforce");
   // 守卫原样下发 —— enforce 只压"无变化跳过"，压不过守卫（契约3）
   assert.deepEqual(forced.fields.focus.guards, norm.fields.focus.guards);

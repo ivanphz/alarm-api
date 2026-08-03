@@ -161,17 +161,7 @@ test("反例: 缺 locales 时 none 照样拿得到（它是空字符串，不随
 // 副产品: once/enforce 都不查 la → focus 字段彻底不依赖本地 la。
 
 
-test("反例: silent 未改动，segment 下照常在场且仍是 on_change", async () => {
-  const b = await call(`date=${WED}&now=23:00&locales=zh`);
-  assert.equal(b.fields.silent.value, "on");
-  assert.equal(b.fields.silent.apply, "on_change");   // 读不回来的字段仍靠 la
-});
 
-test("反例: ?apply=enforce 全局覆盖仍然最大（once 不得吃掉它）", async () => {
-  const b = await call(`date=${WED}&now=15:00&locales=zh&apply=enforce`);
-  assert.ok(b.fields.focus, "全局 enforce 时 focus 应在场");
-  assert.equal(b.fields.focus.apply, "enforce");
-});
 
 test("APPLY_AT: 单个边界可改判据（任意字段、任意时刻自己指定）", async () => {
   const { assembleState } = await import("../../src/edge/assemble.js");
@@ -234,39 +224,10 @@ test("形状与判据: 六个边界各按自己的配置下发", async () => {
   }
 });
 
-test("有界电平: 漏发的晨间解除，窗口内任何一次调用都能补上", async () => {
-  const late = await call(`date=${WED}&now=08:00&locales=zh`);      // 段查询，非刺客时刻
-  assert.equal(late.fields.focus.value.action, "off");
-  assert.equal(late.fields.focus.apply, "enforce");                 // 不查 la，照做
-  assert.deepEqual(late.fields.focus.guards[0].value, ["sleep"]);   // 守卫仍然可否决
-  assert.equal(late.fields.focus.from, `${WED} 07:44`);
-});
 
-test("窗口一过自动撤销主张 → 白天手动小睡不被误伤", async () => {
-  for (const t of ["08:40", "09:00", "12:30", "15:00"]) {
-    const b = await call(`date=${WED}&now=${t}&locales=zh`);
-    assert.equal(b.fields.focus.value, null, `${t} 应已撤销主张`);
-  }
-});
 
-test("周末窗口: 09:30 起 50 分钟", async () => {
-  assert.equal((await call(`date=${SAT}&now=10:15&locales=zh`)).fields.focus.value.action, "off");
-  assert.equal((await call(`date=${SAT}&now=10:30&locales=zh`)).fields.focus.value, null);   // 反例
-});
 
-test("pulse 只有点查询看得见: 午休段查询看不到 dnd 主张", async () => {
-  const pt = await call(`date=${WED}&now=12:15&mode=point&locales=zh`);
-  assert.equal(pt.fields.focus.value.preset, "do_not_disturb");     // 刺客看得见
-  const seg = await call(`date=${WED}&now=12:30&locales=zh`);
-  assert.equal(seg.fields.focus.value, null);                       // 心跳看不见（反例）
-});
 
-test("夜间是电平: 段查询看得到当前主张（自愈能补开）", async () => {
-  const b = await call(`date=${WED}&now=21:00&locales=zh`);
-  assert.equal(b.fields.focus.value.action, "on");
-  assert.equal(b.fields.focus.apply, "on_change");   // 尊重你半夜的手动关闭
-  assert.deepEqual(b.fields.focus.guards[0].value, ["none"]);
-});
 
 test("长假五连休: 每晚刺客都拿得到 focus（null 释放主张未被 OWN 吞掉）", async () => {
   const H = new Set(["2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17"]);
@@ -299,17 +260,73 @@ test("窗口终点与碰撞区终点不一致 → 审计响亮告警（fail-loud
   assert.equal(b.trace.filter((x) => x.includes("morning_window")).length, 0);
 });
 
-test("不在刺客白名单的边界 → 审计标出它依赖门铃（出差死锁的根因）", async () => {
-  const b = await call(`date=${WED}&now=21:00&locales=zh`);
+// ★ 吸附之后: 常规日子【零门铃】—— 所有边界都落在已有刺客上（Ivan 2026-07-31）
+test("常规工作日不需要任何门铃（边界全部落在已有刺客上）", async () => {
+  const b = await call(`date=${WED}&now=20:55&mode=point&locales=zh`);
+  assert.equal(b.trace.filter((x) => x.includes("needs_doorbell")).length, 0,
+    "常规日子不该有任何依赖门铃的边界");
+});
+
+test("反例: 出差日的动态解除时刻仍需门铃（那才是门铃存在的理由）", async () => {
+  const trip = {
+    async loadWorkdays() {
+      const out = [];
+      for (let d = "2026-07-01"; d <= "2026-08-02"; d = addDays(d, 1)) {
+        const w = new Date(d + "T00:00:00Z").getUTCDay();
+        out.push({ date: d, off: w === 0 || w === 6, name: "" });
+      }
+      return out;
+    },
+    async loadCalendars() {
+      return [{ title: "出差", date: WED, start_time: "08:10", end_time: "22:00" }];
+    },
+    async loadExternalAlarms() { return []; },
+    async loadFacts() { return { streams: {}, degraded: [] }; },
+  };
+  const res = await handleV2(new Request(`https://x/v2/state?date=${WED}&now=08:30&mode=point&locales=zh`),
+                             {}, "/state", trip);
+  const b = await res.json();
   const hit = b.trace.filter((x) => x.includes("needs_doorbell"));
-  assert.ok(hit.length > 0, "没有刺客覆盖的边界必须被标出来");
-  assert.ok(/\d{2}:\d{2}/.test(hit[0]), "要指名是哪一刻");
-  assert.ok(hit[0].includes("PUSH.ENABLED=false"), "要写明关掉门铃的后果");
+  assert.ok(hit.some((x) => x.includes("08:30")), "08:30 是算出来的，没有刺客覆盖");
 });
 
 test("通道抽象: media_volume 带 channel token，resolve 给本机名", async () => {
-  const b = await call(`date=${WED}&now=21:00&locales=zh`);
+  const b = await call(`date=${WED}&now=20:55&mode=point&locales=zh`);
   assert.equal(b.fields.media_volume.channel, "media");     // 不是写死的枚举
   assert.equal(b.resolve.volume_channel.media[0], "媒体");        // 系统语言优先
   assert.equal(b.resolve.volume_channel.ringtone[0], "电话铃声");
+});
+
+// ═══ 全 pulse 契约（Ivan 2026-07-31）═════════════════════════════════════════
+// 六个边界全部是【一次性事件】: 到点做一次，之后没有任何主张。
+//   · 白天/夜里的段查询一律看不见 focus → 手动开的专注永不被误关
+//   · 每晚都是独立事件 → 长假连着几晚照常进睡眠（同值不合并）
+//   · 常规日子的时刻都落在刺客上 → 零门铃；只有出差的动态时刻才用门铃
+test("段查询一律看不见 focus（pulse 段内无主张）", async () => {
+  for (const t of ["06:00", "08:00", "10:00", "12:30", "15:00", "21:00", "23:00"]) {
+    const b = await call(`date=${WED}&now=${t}&locales=zh`);
+    assert.equal(b.fields.focus, undefined, `${t} 不该有 focus 主张`);
+  }
+});
+
+test("反例: silent 也是 pulse，段查询同样看不见；但 media_volume 的午间归零仍在点上", async () => {
+  const seg = await call(`date=${WED}&now=15:00&locales=zh`);
+  assert.equal(seg.fields.silent, undefined);
+  const pt = await call(`date=${WED}&now=12:15&mode=point&locales=zh`);
+  assert.equal(pt.fields.media_volume.value, 0);
+});
+
+test("六个边界的时刻: 工作日 07:44 / 周末 09:30 / 夜间 20:55 或 22:25", async () => {
+  const at = async (d, t) => (await call(`date=${d}&now=${t}&mode=point&locales=zh`)).fields.focus;
+  assert.equal((await at(WED, "07:44")).value.action, "off");
+  assert.equal((await at(WED, "20:55")).value.action, "on");
+  assert.equal((await at(SAT, "09:30")).value.action, "off");
+  assert.equal((await at(SAT, "22:25")).value.action, "on");
+  // 反例: 旧的 07:40 已不再是边界（下限提到 07:44）
+  assert.equal(await at(WED, "07:36"), undefined);
+});
+
+test("?apply=enforce 仍然压得过一切（人工推平时 pulse 也要能被取到）", async () => {
+  const b = await call(`date=${WED}&now=07:44&mode=point&locales=zh&apply=enforce`);
+  assert.equal(b.fields.focus.apply, "enforce");
 });

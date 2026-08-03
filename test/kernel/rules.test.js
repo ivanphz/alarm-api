@@ -172,3 +172,11 @@ test("反例: 引用存在的规则不告警", async () => {
                 ["wake_alarms"], trace);
   assert.deepEqual(trace, []);
 });
+
+test("night 是合法的第四根轴（加轴要同时改 day-type 和 WHEN_AXES 白名单）", () => {
+  assert.doesNotThrow(() => toCanonical({
+    fields: { f: { RULES: { "21:30": { when: { night: ["away"] }, value: "on" } } } },
+  }));
+  assert.equal(whenMatches({ night: ["away"] }, { night: "away" }), true);
+  assert.equal(whenMatches({ night: ["home"] }, { night: "away" }), false);
+});

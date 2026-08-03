@@ -82,10 +82,11 @@ test("纠偏事实: reset 立即恢复；set_next 手动指定", async () => {
 
 test("事实源降级 → cadence.ai_claude 无主张(null)，其余字段不受影响", async () => {
   const ld = loaders([], { async loadFacts() { return { streams: {}, degraded: ["ai_claude"] }; } });
-  // 取夜间段: 白天 silent 已撤销主张(null)，看不出"不受影响"
-  const b = await call("date=2026-07-15&now=21:00", ld);
-  assert.equal(b.fields["cadence.ai_claude"].value, null);
-  assert.equal(typeof b.fields.silent.value, "string");
+  // cadence 是 level（段查询看得见）；silent 是 pulse（只在刺客时刻看得见）→ 各查各的
+  const seg = await call("date=2026-07-15&now=21:00", ld);
+  assert.equal(seg.fields["cadence.ai_claude"].value, null);
+  const pt = await call("date=2026-07-15&now=20:55&mode=point", ld);
+  assert.equal(typeof pt.fields.silent.value, "string");        // 其余字段不受降级影响
 });
 
 test("/v2/fact: 写入、幂等去重、校验、GET 列取（假 KV）", async () => {

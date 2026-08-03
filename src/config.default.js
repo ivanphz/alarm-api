@@ -12,65 +12,119 @@
  * ==============================================================================
  */
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 安静时刻表（唯一真相）—— 下面 DND 段与 V2.FIELDS.focus.OWN 都从这里取。
+// ═════════════════════════════════════════════════════════════════════════════
+// 📌 本文件顶部的常量 —— 时刻与参数的【唯一真相】
+// ═════════════════════════════════════════════════════════════════════════════
+// 下面这些常量被 V2.FIELDS.*.RULES 引用（`[DND_TIMES.NIGHT_ON_WORKDAY_EVE]: {...}`）。
+// 提成常量而不是到处写字面量，是因为同一个时刻往往出现在多处（规则键、白名单、
+// 窗口终点），各写一遍就会改一处忘一处 —— 而漏改的表现通常是【静默的】。
 //
-// 为什么提成常量: focus 的 OWN 键【必须与 DND 的时刻字面相等】才能"焊"在同一个
-// 订阅边界上（kernel/fields.js: 同刻 = 合并微调，不同刻 = 独立主张）。
-// 两处各写一遍字符串 = 改一处忘另一处 → 午间静音照常、但专注挡位悄悄回落成 sleep，
-// 不报错不告警。KERNEL §15「语义同源→改一处全跟」，故共用一份。
-// ★ 改时刻请去 config.user.js 覆盖 DND.<键>，并同步覆盖 DND.WHITELIST 与
-//   V2.FIELDS.focus.OWN 的对应键（用户层没有本常量，只能写字面量）。
-// ─────────────────────────────────────────────────────────────────────────────
-// 晨间"迟到边界": 再晚就归人管。ZONES.MORNING.end 与 focus 晨间解除窗口终点共用。
-// ⚠️ 在 config.user.js 里改了 ZONES.MORNING.end，必须同步改 FIELDS.focus.SHAPE_AT
-//    里晨间那条的 until（用户层没有本常量，只能写字面量）。规则表阶段会自动派生。
-const MORNING_LATE_EDGE = "08:00";
+// ┌─ 想改东西，去哪改 ──────────────────────────────────────────────────────┐
+// │ 改时刻/参数的【值】     → config.user.js 覆盖对应项（本文件会被新版覆盖）│
+// │ 改规则的【结构】        → 本文件 V2.FIELDS.<字段>.RULES                  │
+// │ 看规则最终长什么样      → 部署后访问 /v2/schema                          │
+// │ 看某天几点会发生什么    → /v2/timeline?date=YYYY-MM-DD&debug=1           │
+// └────────────────────────────────────────────────────────────────────────┘
+//
+// ⚠️ config.user.js 里没有这些常量（那是另一个文件的局部变量），只能写字面量。
+//    改了时刻务必同时改 DND.WHITELIST —— 数组是整段替换，不会自动合并。
+// ═════════════════════════════════════════════════════════════════════════════
 
-// 起床闹钟响完多久解除 focus/silent/volume（Ivan 2026-07-29: 10 或 20 分钟）。
-// 太短会在你还没起来时就放开通知；太长则起床后一段时间仍被静音挡着。
-const WAKE_RELEASE_OFFSET = 20;
-// 解除窗口长度（有界电平）: 漏发的补救期。必须 ≥ 2×PUSH.SWEEP_MINUTES，
-// 否则兜底扫描可能一次都扫不到它（审计会喊）。
-const RELEASE_WINDOW_MINUTES = 50;
-
-// ── 三个字段共用的晨/夜骨架 ──────────────────────────────────────────────────
-// focus / silent / media_volume 的【时刻与日型条件完全一样】，只有值和判据不同。
-// 抽成函数 = 改晨间锚点或日型分支时改一处全跟；各字段的差异留在参数里，一眼可见。
-//   onValue   进入安静时的值（focus 用 "on"，silent 用 "on"，音量用 0）
-//   offValue  解除时的值（音量解除是"无主张"，所以传 null）
-//   extra     该字段独有的东西（守卫、preset…）
-function quietShape({ onValue, offValue, apply = "if_changed", releaseApply = "always",
-                      onExtra = {}, offExtra = {} }) {
-  const anchored = { from: "wake_alarms", pick: "last_wake",
-                     offset: WAKE_RELEASE_OFFSET, fallback: DND_TIMES.MORNING_OFF_WORKDAY };
-  return {
-    [DND_TIMES.NIGHT_ON_WORKDAY_EVE]:
-      { when: { eve: ["workday"] }, value: onValue, shape: "level", apply, ...onExtra },
-    [DND_TIMES.NIGHT_ON_REST_EVE]:
-      { when: { eve: ["rest"] }, value: onValue, shape: "level", apply, ...onExtra },
-    "@morning_release": [
-      { when: { morning: ["work", "leave_short"] }, at: anchored, value: offValue,
-        shape: "level", until: { offset: RELEASE_WINDOW_MINUTES }, apply: releaseApply, ...offExtra },
-      { when: { morning: ["leave_long_tail"] }, at: anchored, value: null,
-        shape: "level", apply: releaseApply },
-    ],
-    [DND_TIMES.MORNING_OFF_WEEKEND]: [
-      { when: { morning: ["rest_short"] }, value: offValue, shape: "level",
-        until: { offset: RELEASE_WINDOW_MINUTES }, apply: releaseApply, ...offExtra },
-      { when: { morning: ["rest_long"] }, value: null, shape: "level", apply: releaseApply },
-    ],
-  };
-}
-
+// ── 安静时刻表 ────────────────────────────────────────────────────────────────
+// 这六个时刻同时也是【手机上要建的时间自动化】（刺客）。加一个时刻就要在手机上
+// 多建一条自动化，否则那一刻手机不会醒 —— /v2/schema 的 automations 段会告诉你缺哪条。
 const DND_TIMES = {
   NIGHT_ON_WORKDAY_EVE: "20:55",   // 明天上班 → 今晚提前静音
   NIGHT_ON_REST_EVE:    "22:25",   // 明天休息 → 今晚晚点静音
-  MORNING_OFF_WORKDAY:  "07:40",   // 工作日早间解除（含出差日/半天假的正常上班半天）
-  MORNING_OFF_WEEKEND:  "09:30",   // 普通周末(块<3天)早间解除
+  MORNING_OFF_WORKDAY:  "07:44",   // 工作日晨间解除的【下限 + 兜底】，见下方 MORNING_RELEASE_FLOOR
+  MORNING_OFF_WEEKEND:  "09:30",   // 普通周末(块<3天)晨间解除
   NOON_ON:  "12:15",               // 工作日午休静音
   NOON_OFF: "13:29",               // 工作日午休解除
 };
+
+// ── 晨间"迟到边界": 再晚就归人管 ──────────────────────────────────────────────
+// 与 ZONES.MORNING.end 共用一个值 —— 它们是同一条线: 早于它系统管，晚于它你自己管。
+const MORNING_LATE_EDGE = "08:00";
+
+// ── 晨间解除的锚定参数 ────────────────────────────────────────────────────────
+// 解除时刻 = 当天【最晚起床闹钟】 + WAKE_RELEASE_OFFSET，算不出就回落 MORNING_OFF_WORKDAY。
+// 这样出差日闹钟 08:10 响 → 08:30 解除，不会像写死 07:40 那样提前把静音撤了。
+const WAKE_RELEASE_OFFSET = 20;     // 分钟。太短你还没起就放开通知，太长起床后仍被挡
+
+// ── 为什么晨间解除是 pulse 而不是"有界电平"（Ivan 2026-07-31 拍板）────────────
+// 有界电平（level + until）当初是为了"漏发兜底": 07:44 那次没跑成，窗口内后续调用能补。
+// 但常规日子【没有后续调用】—— 下一个刺客是 point 模式，看不见 07:44 那个边界。
+// 于是窗口在常规日子提供不了任何东西，却制造出一个需要投递的撤销边界（它落不到刺客上）。
+//
+// 所以: 常规解除 = pulse（一次性，做完就没主张，白天手动开的专注天然安全）。
+//       特殊事件（出差的动态时刻）= 同样是 pulse，只是靠门铃投递。
+//       漏发的补救交给【回传 + 自愈】，那是它该待的层，不是靠时间线上的窗口硬撑。
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 三个字段共用的晨/夜规则骨架
+// ─────────────────────────────────────────────────────────────────────────────
+// focus / silent / media_volume 的【时刻与日型条件完全一样】，只有值和判据不同。
+// 抽成函数 = 改晨间锚点或日型分支时改一处全跟；各字段的差异留在参数里，一眼可见。
+//
+//   onValue      进入安静时的值（focus/silent 用 "on"，音量用 0）
+//   offValue     解除时的值（音量解除是"无主张"，所以传 null）
+//   apply        进入侧判据。缺省 if_changed = 比对手机本地记忆，变了才动手
+//                → 你半夜手动关掉不会被重开；但被守卫拦掉的那次会在下次补上
+//   releaseApply 解除侧判据。缺省 always = 窗口内每次调用都重新求值（靠守卫收敛），
+//                这样漏发的解除能被补上
+//   onExtra      进入侧独有的东西（如 focus 的 guard:"none" = 手动开着专注就让路）
+//   offExtra     解除侧独有的东西（如 focus 的 guard:"sleep" = 只解除睡眠，别人的不碰）
+//
+// 产出的规则键有两类:
+//   "HH:MM"        固定时刻，同时必须是 DND.WHITELIST 成员（手机上有对应的时间自动化）
+//   "@具名"        时刻由 at 表达式算出（见 @morning_release），靠门铃送达
+// ─────────────────────────────────────────────────────────────────────────────
+function quietShape({ onValue, offValue, apply = "if_changed", releaseApply = "always",
+                      onExtra = {}, offExtra = {} }) {
+  // 晨间解除锚点: 当天最晚起床闹钟 + 偏移；算不出（如全天事件、周末）则回落固定时刻
+  // 晨间解除锚点: 当天最晚起床闹钟 + 偏移，但【不早于】MORNING_OFF_WORKDAY。
+  //   平时闹钟 06:29 → 06:49 → 吸附到 07:44（不提前解除，Ivan 2026-07-31）
+  //   暑假闹钟 07:24 → 07:44 → 正好是下限
+  //   出差闹钟 08:10 → 08:30 → 晚于下限，成为动态边界（唯一需要门铃的一个）
+  const anchored = { from: "wake_alarms", pick: "last_wake", offset: WAKE_RELEASE_OFFSET,
+                     not_before: DND_TIMES.MORNING_OFF_WORKDAY,
+                     fallback: DND_TIMES.MORNING_OFF_WORKDAY };
+  return {
+    // ── 夜间进入安静: 两个时刻、三种情形 ──────────────────────────────────
+    //   在家 + 明天上班  → 20:55 提前进
+    //   在家 + 明天休息  → 22:25 晚点进
+    //   不在家（出差等） → 22:25 晚点进 ★ 吸附到已有刺客，不新建 21:30（Ivan 2026-07-31）
+    //   ⚠️ 22:25 那格是【数组变体】: 两条 when 必须互斥，同时命中 = 编译期报错。
+    //      away 那条不看明天上不上班 —— 出差在外，早早勿扰没意义。
+    //   ⚠️ 必须是 pulse: 每晚都是同一个 sleep|on，若用 level 则相邻同值会被【归一化
+    //      合并】—— 结果是只有第一晚有边界，之后夜夜查无此字段（2026-07-27 长假实案的
+    //      通用版本）。pulse = 每晚都是独立事件，天然不合并。
+    [DND_TIMES.NIGHT_ON_WORKDAY_EVE]:
+      { when: { night: ["home"], eve: ["workday"] }, value: onValue,
+        shape: "pulse", apply, ...onExtra },
+    [DND_TIMES.NIGHT_ON_REST_EVE]: [
+      { when: { night: ["home"], eve: ["rest"] }, value: onValue,
+        shape: "pulse", apply, ...onExtra },
+      { when: { night: ["away"] }, value: onValue, shape: "pulse", apply, ...onExtra },
+    ],
+
+    // ── 晨间解除 ────────────────────────────────────────────────────────────
+    //   一格两条变体，按晨间日型互斥选择:
+    //     常规（上班日 / 短假晨碰 / 普通周末）→ pulse 一次性解除
+    //     长假中段/尾巴                      → 【不产边界】= 早上不解除，绝不吵醒
+    //       没有匹配的变体 = 该日这一格没有规则启用，天然什么都不做。
+    //       （全 pulse 之后不再需要 null 来打断同值合并 —— pulse 本来就不合并。）
+    //
+    //   时刻: 常规日子落在固定刺客上（工作日 07:44 / 周末 09:30），零门铃；
+    //         只有出差这类【算出来的动态时刻】才落在刺客之外，由门铃投递。
+    "@morning_release":
+      { when: { morning: ["work", "leave_short"] }, at: anchored, value: offValue,
+        shape: "pulse", apply: releaseApply, ...offExtra },
+    [DND_TIMES.MORNING_OFF_WEEKEND]:
+      { when: { morning: ["rest_short"] }, value: offValue,
+        shape: "pulse", apply: releaseApply, ...offExtra },
+  };
+}
 
 export const DEFAULT_CONFIG = {
 
@@ -428,6 +482,13 @@ export const DEFAULT_CONFIG = {
         //
         //  守卫 guard 是 only_if_current 的糖: "none"=当前没有任何专注（Get Current
         //  Focus 返回空，Ivan 实测确认）。要多值写数组，要完整语法写 guards。
+        // ── RULES: 一个边界一行 ─────────────────────────────────────────────
+        //   键   = 时刻 "HH:MM"（必须在 DND.WHITELIST 里）或 "@具名"（时刻算出来）
+        //   when = 日型条件，四根轴取交集: morning / noon / eve / night
+        //   value/preset = 做什么   shape/until = 主张多久   apply = 凭什么动手
+        //   guard = 什么情况让路（"none"=当前没有任何专注才动手）
+        //   一格写成数组 = 多条变体，按 when 互斥选择；同时命中两条 → 编译期报错
+        //   ★ 晨/夜那几条来自 quietShape()（本文件顶部），三个字段共用，改一处全跟
         RULES: {
           ...quietShape({
             onValue: "on", offValue: "off",
@@ -457,6 +518,13 @@ export const DEFAULT_CONFIG = {
                                      //   订阅换一条规则。手机端零改动。
         // 单位: 整数 0–100（契约§5）。进入安静→归零；解除→无主张（白天音量归人管）。
         // 午间跟 focus 一起走脉冲: 12:15 归零、13:29 交还。
+        // ── RULES: 一个边界一行 ─────────────────────────────────────────────
+        //   键   = 时刻 "HH:MM"（必须在 DND.WHITELIST 里）或 "@具名"（时刻算出来）
+        //   when = 日型条件，四根轴取交集: morning / noon / eve / night
+        //   value/preset = 做什么   shape/until = 主张多久   apply = 凭什么动手
+        //   guard = 什么情况让路（"none"=当前没有任何专注才动手）
+        //   一格写成数组 = 多条变体，按 when 互斥选择；同时命中两条 → 编译期报错
+        //   ★ 晨/夜那几条来自 quietShape()（本文件顶部），三个字段共用，改一处全跟
         RULES: {
           ...quietShape({ onValue: 0, offValue: null }),
           [DND_TIMES.NOON_ON]:  { when: { noon: ["work"] }, value: 0,
