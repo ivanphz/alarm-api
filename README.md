@@ -16,7 +16,7 @@
                     Cloudflare Worker（本仓库 src/）
         插件产出命名规则 → 内核合并采样 → 设备字段 + 闹钟清单(JSON)
                                      ▼  HTTP GET
-                    iPhone 快捷指令（本地执行，见 docs/PHONE.md）
+                    iPhone 快捷指令（本地执行，见 docs/04-PHONE.md）
         ApplySilent / ApplyFocus / ApplyVolume + SyncAlarms + 边界刺客
 ```
 
@@ -34,9 +34,9 @@
 |---|---|
 | 架构 | **V12 插件化内核**（v1 已于 2026-07-27 下线，v2 为唯一路径） |
 | 测试 | `node --test` **102 用例全绿** |
-| 手机端 | **待装配**——服务端契约已冻结，照 `docs/PHONE.md` v4.3 从头搭一次 |
+| 手机端 | **待装配**——服务端契约已冻结，照 `docs/04-PHONE.md` 装配（先做 §0 列的三件） |
 | 路由 | **`/v2` 前缀可选**：`/state` 与 `/v2/state` 等价（v1 下线后前缀已无区分作用） |
-| 下一步 | **部署 → 装配手机端 → 真机 debug**（契约见 `docs/CONTRACT.md`） |
+| 下一步 | **部署 → 装配手机端 → 真机 debug**（部署步骤见 `docs/06-OPERATIONS.md` §0） |
 
 ---
 
@@ -89,61 +89,27 @@ alarm-api/
 
 ---
 
-## 怎么上手（按你的角色选路径）
+## 文档
 
-| 你是 | 从哪开始 |
+**从 [`docs/00-README.md`](docs/00-README.md) 开始** —— 那里有完整地图和当前状态。
+
+| 我想… | 看 |
 |---|---|
-| 🤖 **接力开发的新会话（AI 或人）** | **`docs/HANDOFF.md`** —— 强制阅读顺序 + 不变量 + 落点速查 + 路线图。**先读完再动任何代码。** |
-| 🧭 想搞懂架构 | `docs/KERNEL.md`（宪法: 十五条契约、命名法、术语表、数据结构附录） |
-| 🔧 想改行为 | `docs/RULEBOOK.md`（改什么 → 动哪层 → 给 AI 哪些文件 → 验收标准） |
-| 📱 要建/改手机端快捷指令 | `docs/PHONE.md`（逐动作脚本，**手机端唯一真相源**） |
-| 🚀 要部署上线 | `docs/OPERATIONS.md`（密钥、KV、冒烟、排错、交付纪律） |
-| 🔌 别的项目想把闹钟接进来 | 把 `docs/EXTERNAL-SOURCES.md` **第一部分**发给对接方 |
-| 🕹 想手工接管某一天 | `docs/GOD-MODE.md` |
+| 搞懂这个项目怎么运作 | [`docs/01-CONCEPTS.md`](docs/01-CONCEPTS.md) |
+| **改几点做什么** | [`docs/02-RULES.md`](docs/02-RULES.md) |
+| 改服务端↔手机端接口 | [`docs/03-CONTRACT.md`](docs/03-CONTRACT.md) |
+| 建/改手机端快捷指令 | [`docs/04-PHONE.md`](docs/04-PHONE.md) |
+| 查手机到底能做什么 | [`docs/05-FACTS.md`](docs/05-FACTS.md) ⭐ 实测台账，**不要查外部资料** |
+| 部署上线 / 排错 | [`docs/06-OPERATIONS.md`](docs/06-OPERATIONS.md) |
+| 知道还有什么没做 | [`docs/07-ROADMAP.md`](docs/07-ROADMAP.md) |
+| **出了怪事** | [`docs/08-LESSONS.md`](docs/08-LESSONS.md) ⭐ 踩坑总账 |
+| 改架构 / 查 `契约N` | [`docs/09-KERNEL.md`](docs/09-KERNEL.md) |
+| 把别的项目的闹钟接进来 | [`docs/12-EXTERNAL-SOURCES.md`](docs/12-EXTERNAL-SOURCES.md)（可直接发给对接方） |
+| 想拆掉某个设计 | [`docs/13-HISTORY.md`](docs/13-HISTORY.md) —— 先看当初为什么这么定 |
 
-**改行为速查**: 开关在 `config.default.js`（个人差异写进 `config.user.js`，纯增量）；
-决策逻辑在 `src/plugins/<规则名>.js`；字段订阅在 `router.js` 的 `V2_DEFAULTS.FIELDS`。
+🤖 **接力开发的新会话（AI 或人）**：读 `docs/00-README.md` 的
+「三条纪律」+「十一条不变量」，再读 `02-RULES` 和 `05-FACTS`。**先读完再动代码。**
 
-**测试回路**: `<域名>/v2/timeline?key=…&date=YYYY-MM-DD&now=HH:MM` 看内脏
-（schedules + field_timelines + 结构化 trace）；`?testEvents=` 可注入虚拟日历事件。
-
----
-
-## 文档索引
-
-**契约层**（改之前必读）
-| 文档 | 内容 |
-|---|---|
-| `docs/CONTRACT.md` | ⭐ **手机端契约冻结版**：四条形状法则 + 信封全貌 + 读取伪代码 |
-| `docs/KERNEL.md` | 宪法: 十五条契约、命名法、两类铁律、术语表、数据结构附录 |
-| `docs/RULEBOOK.md` | 操作手册: 事实词汇表 + 变更配方表 + 委托 AI 模板 |
-| `docs/PHONE.md` | ⭐ 手机端逐动作装配手册 v4.3：七条铁则 + 逐块脚本 + 坑表 + 验收 |
-| `docs/CHANNELS.md` | iPhone 打断/提醒/触发能力总册（新"想被提醒"需求先查此表） |
-
-**接口与运维**
-| 文档 | 内容 | 读者 |
-|---|---|---|
-| `docs/OPERATIONS.md` | 部署、密钥、KV、冒烟、排错、交付纪律 | 你 |
-| `docs/EXTERNAL-SOURCES.md` | 外部闹钟源: §A 对接协议（可外发）/ §B 内部机制 | 乙方 / 你 |
-| `docs/GOD-MODE.md` | 上帝模式: 触发条件 + JSON 模板 + 排错 | 你 |
-
-**待做（设计已定稿）**
-| 文档 | 内容 |
-|---|---|
-| `docs/RULE-TABLE.md` | ⬅ **下一步主任务**：规则表 + 日型原子化 + `/v2/schema`（破坏性重构，手机端零改动） |
-| `docs/DEVICE-ABSTRACTION.md` | 服务端已完成: 语义 token + resolve 解析表，跨平台前提 |
-| `docs/TODO-CHANNEL.md` | todo 执行通道 + Bark 推送通道（服务端 + 手机端完整契约） |
-| `docs/FEEDBACK-SELFHEAL.md` | 手机回传 + 闹钟对账自愈（三阶段，接口形状已冻结） |
-| `docs/HORIZON.md` | 远期方向账本: 可视化/网页配置/多设备/格式嗅探（只钉形状不写码） |
-
-**交接与历史**
-| 文档 | 内容 |
-|---|---|
-| `docs/HANDOFF.md` | ⭐ 接力开发防偏移契约 + 路线图 + 落点速查 |
-| `docs/DEVLOG.md` | 踩坑总账（iOS/Worker）+ 决策考古 + 版本时间线 |
-| `docs/_archive/` | 已完成的一次性文档与 v1 时代文档（有效结论已迁出，仅供考古） |
-
----
 
 ## 三个最容易踩错的点（先记住，细节看对应文档）
 

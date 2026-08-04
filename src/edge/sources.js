@@ -41,6 +41,9 @@ export function resolveInstances(events, spanStart, spanEnd) {
 }
 
 /** 日历: 真实 ICS + 虚拟 testEvents → 日实例 */
+// ICS 边缘缓存秒数。cron 高频扫描时这是唯一挡在日历服务器前面的东西。
+const CALENDAR_CACHE_TTL = 300;
+
 export async function loadCalendars(env, { skipCalendar, testEventsRaw }, span, trace) {
   const T = (level, ref, msg) => trace.push({ level, plugin: "sources", ref, msg });
   let events = [];
@@ -52,7 +55,11 @@ export async function loadCalendars(env, { skipCalendar, testEventsRaw }, span, 
   } else {
     for (const u of urls) {
       try {
-        const res = await fetch(u);
+        // 边缘缓存: cron 每 SWEEP_MINUTES 跑一次，不加缓存就是每 5 分钟重抓一遍 ICS ——
+        // 对 Cloudflare 额度无所谓，但对日历服务器（iCloud 等）是不必要的负载。
+        // 日历改动到生效最多晚 CALENDAR_CACHE_TTL 秒，这对"明天出差"这类信息完全够用。
+        // 想立刻生效: 带 ?nocache=1 或等下一轮（cache 是每个 colo 独立的，天然分散）。
+        const res = await fetch(u, { cf: { cacheTtl: CALENDAR_CACHE_TTL, cacheEverything: true } });
         if (res.ok) {
           const parsed = parseICS(await res.text());
           events = events.concat(parsed);
