@@ -1,0 +1,38 @@
+# ==============================================================================
+# GitHub Actions — 测试（唯一会执行 npm test 的地方之一）
+#
+# 为什么单独一个工作流:
+#   deploy.yml 只在【代码】改动时触发，但 test/docs.test.js 检查的是【文档】——
+#   改文档不部署是对的，但改文档必须验文档，否则那些检查形同虚设。
+#
+# 分工:
+#   本工作流   任何改动都跑（代码 + 文档）—— 快，只有 npm ci + npm test
+#   deploy.yml 只在代码改动时跑，且部署前会再跑一次测试当闸门
+# ==============================================================================
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@ivanphz'
+
+      - name: 安装依赖
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: npm test
+        run: npm test
