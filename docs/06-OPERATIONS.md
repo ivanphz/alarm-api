@@ -117,6 +117,26 @@ EXTERNAL_ALARMS: {
 
 ---
 
+## 0.3 CI 工作流分工（谁在什么时候跑）
+
+| 工作流 | 触发 | 干什么 |
+|---|---|---|
+| `test.yml` | **任何** push / PR | `npm test`（194 用例）。**改文档也跑** —— `docs.test.js` 检查的就是文档 |
+| `deploy.yml` | 只在 `src/` `test/` `package*.json` `wrangler.toml` 改动时 | 先 `npm test`，**通过才部署** |
+| `doorbell-image.yml` | 只在 `server/**` 改动时 | 构建门铃调度器镜像推 GHCR |
+| `update-core.yml` | `workdays-core` 发版时（repository_dispatch） | 自动 bump 依赖 |
+
+**两条设计考虑**：
+
+1. **改文档不触发部署** —— 既省额度，也避免把一份内容完全相同的代码重新推上去。
+2. **部署前必跑测试** —— Ivan 只用 GitHub 网页、没有本地环境，
+   **CI 是唯一会执行 `npm test` 的地方**。少了这道闸门，194 个用例等于不存在。
+
+> ⚠️ 2026-07-31 之前：`deploy.yml` 无 paths 过滤（改个错别字也部署），
+> 且**没有任何工作流跑测试** —— 那批"机械保障"其实从未执行过。
+
+---
+
 ## 1. 网关部署（Cloudflare Worker）
 
 - [ ] **A1** 私有包作用域 `@ivanphz/workdays-core` 已全库固化，无需替换任何占位符。

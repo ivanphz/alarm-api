@@ -210,3 +210,21 @@ test("06-OPERATIONS 的 AUTH_DISABLED 警告与实际状态一致", () => {
       ? "AUTH_DISABLED 还开着，06-OPERATIONS 必须留警告"
       : "AUTH_DISABLED 已关闭，请把 06-OPERATIONS 里的警告撤掉");
 });
+
+// ── 落库事故防线（2026-08-04 首次 CI 实战发现）────────────────────────────────
+// `node --test` 会执行 test/ 下【任何】.js 文件，不挑文件名。
+// 实案: 中间某轮交付的旧文件被存成 `focus-preset.text.js`（.test 打成 .text），
+// 正确版本后来以 .test.js 存入，旧文件留在原地无人察觉 —— 它带着一整套【过期契约】
+// 的断言，CI 一跑就是 13 条红，而代码本身完全正确。
+//
+// 这类事故的特征: 报错指向的行为「早就改过了」。看到这种就先查文件名。
+test("test/ 下不许有打错扩展名的文件（会被当成测试跑）", () => {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(new URL(e.name + "/", dir)) : [{ dir, name: e.name }]);
+  const stray = walk(new URL("../test/", DOCS))
+    .filter(({ name }) => name.endsWith(".js") && !/\.test\.js$/.test(name))
+    .map(({ name }) => name);
+  assert.deepEqual(stray, [],
+    `test/ 下出现非 .test.js 的 js 文件: ${stray} —— ` +
+    `node --test 会把它当测试跑。检查是不是 .test 打成了 .text/.tests`);
+});
