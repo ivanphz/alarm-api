@@ -180,3 +180,70 @@ test("night 是合法的第四根轴（加轴要同时改 day-type 和 WHEN_AXES
   assert.equal(whenMatches({ night: ["away"] }, { night: "away" }), true);
   assert.equal(whenMatches({ night: ["home"] }, { night: "away" }), false);
 });
+
+// ── 时刻为主键的块级共享（2026-08-04：解决「规则各自为政、没有一处能整读」）──
+test("★ 块级 when/shape/apply 由该时刻所有字段共享，字段只写差异", () => {
+  const c = toCanonical({ boundaries: { "20:55": {
+    when: { night: ["home"] }, shape: "pulse", apply: "if_changed",
+    fields: { focus: { value: "on", guard: "none" }, silent: { value: "on" } },
+  } } });
+  const [f, s] = c["clock@20:55"];
+  assert.deepEqual(f.when, { night: ["home"] });
+  assert.deepEqual(s.when, { night: ["home"] });     // 两个字段都拿到了块级条件
+  assert.equal(f.shape, "pulse");
+  assert.equal(f.guard, "none");
+  assert.equal(s.guard, undefined);                  // 字段专属的不外溢
+});
+
+test("字段级同名键覆盖块级（局部优先）", () => {
+  const c = toCanonical({ boundaries: { "12:15": {
+    shape: "pulse", apply: "always",
+    fields: { focus: { value: "on", apply: "if_changed" }, silent: { value: "on" } },
+  } } });
+  const byField = Object.fromEntries(c["clock@12:15"].map((r) => [r.field, r]));
+  assert.equal(byField.focus.apply, "if_changed");   // 字段自己写的赢
+  assert.equal(byField.silent.apply, "always");      // 没写的继承块级
+});
+
+test("★ 同一时刻多条变体不算冲突（那是按日型分叉，正常写法）", () => {
+  // 2026-08-04 真 bug: 冲突判据只看「这一格出现过没」，把变体误判成重复书写。
+  // 正确判据是【来源不同】才算冲突。
+  assert.doesNotThrow(() => toCanonical({ boundaries: { "22:25": [
+    { when: { night: ["home"], eve: ["rest"] }, fields: { focus: { value: "on" } } },
+    { when: { night: ["away"] },                fields: { focus: { value: "on" } } },
+  ] } }));
+});
+
+test("反例: 真冲突仍要报错（同一格被两种书写形式各写一份）", () => {
+  assert.throws(() => toCanonical({
+    fields: { focus: { RULES: { "20:55": { value: "on" } } } },
+    boundaries: { "20:55": { fields: { focus: { value: "off" } } } },
+  }), /规则冲突/);
+});
+
+test("块级未知键当场炸（防止把字段专属的写到块级）", () => {
+  assert.throws(() => toCanonical({ boundaries: { "20:55": {
+    when: { noon: ["work"] }, guard: "none",        // guard 是字段专属，不该在块级
+    fields: { focus: { value: "on" } },
+  } } }), /块级未知键 guard/);
+});
+
+test("具名键不被当成时刻补零（@morning_release 不该变成 @morning_release:00）", () => {
+  const c = toCanonical({ boundaries: { "@morning_release": {
+    at: { from: "wake_alarms", pick: "last_wake", fallback: "07:44" },
+    fields: { focus: { value: "off" } },
+  } } });
+  assert.ok(c["clock@@morning_release"], "具名键应原样保留");
+});
+
+test("renderRuleTable: 人读视图能回答「某时刻发生什么」", async () => {
+  const { renderRuleTable } = await import("../../src/kernel/rules.js");
+  const c = toCanonical({ boundaries: { "20:55": {
+    when: { night: ["home"] }, shape: "pulse", apply: "if_changed", note: "今晚提前进",
+    fields: { focus: { value: "on", preset: "sleep", guard: "none" } },
+  } } });
+  const txt = renderRuleTable(c);
+  for (const must of ["20:55", "night=home", "今晚提前进", "sleep = on", "pulse", "if_changed", "none"]) {
+    assert.ok(txt.includes(must), `人读表里应该有「${must}」`);
+  }
+});

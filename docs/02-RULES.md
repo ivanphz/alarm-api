@@ -54,7 +54,8 @@
 |---|---|
 | 时刻 / 参数的**值** | `src/config.user.js` 覆盖（`config.default.js` 会被新版覆盖，改了会丢） |
 | 规则的**结构**（加条件、改形状） | `src/config.default.js` 的 `V2.FIELDS.<字段>.RULES` |
-| 看规则最终长什么样 | 部署后访问 `/v2/schema` |
+| **「07:44 到底发生了什么」** | `/v2/schema?format=text` ⭐ 人读的规则表 |
+| 看规则的规范形式（机器视角） | `/v2/schema` |
 | 看某天几点会发生什么 | `/v2/timeline?date=2026-08-05&debug=1` |
 | 看哪些边界需要门铃 | `/sweep/plan?hours=48&key=...` |
 
@@ -96,62 +97,91 @@ MORNING_LATE_EDGE   = "08:00"  // 与 ZONES.MORNING.end 同源：再晚归人管
 
 ---
 
-## 3. 一条规则长什么样
+## 3. 规则表长什么样
+
+**规则全部在 `V2.BOUNDARIES`，一个时刻一个块。** 字段配置里只有缺省值，没有规则。
 
 ```js
-"20:55": {
-  when:  { night: ["home"], eve: ["workday"] },   // 条件：四轴取交集
-  value: "on",                                     // 做什么
-  shape: "pulse",                                  // 主张多久
-  apply: "if_changed",                             // 凭什么动手
-  guard: "none",                                   // 什么情况让路
-  note:  "明天上班 → 今晚提前进睡眠",
+BOUNDARIES: {
+  "20:55": {
+    when:  { night: ["home"], eve: ["workday"] },   // ← 块级：该时刻所有字段共享
+    shape: "pulse",
+    apply: "if_changed",
+    note:  "在家 + 明天上班 → 今晚提前进",
+    fields: {                                        // ← 字段只写自己不同的部分
+      focus:        { value: "on", guard: "none" },
+      silent:       { value: "on" },
+      media_volume: { value: 0 },
+    },
+  },
 }
 ```
+
+**这样写的理由**：你的问题永远是「**某个时刻会发生什么**」，
+所以按时刻组织、一个块读完，不用在三个字段之间来回跳、也不用心算函数展开。
+
+### 3.1 块级 vs 字段级
+
+| 可放块级（共享） | 只能放字段级 |
+|---|---|
+| `when` `shape` `apply` `at` `until` `note` | `value` `preset` `guard` `guards` |
+
+字段级同名键**覆盖**块级（局部优先）。往块级写字段专属的键会**当场报错**。
+
+### 3.2 一格多条变体
+
+同一时刻按日型分叉，写成数组，**`when` 必须互斥**：
+
+```js
+"22:25": [
+  { when: { night:["home"], eve:["rest"] }, ..., fields: {...} },   // 在家 + 明天休
+  { when: { night:["away"] },               ..., fields: {...} },   // 不在家
+],
+```
+
+同一天两条同时命中 = **编译期报错**（不做优先级、不做后写覆盖，见 §6.0）。
+
+### 3.3 键的两种形态
+
+| 键 | 含义 |
+|---|---|
+| `"HH:MM"` | 固定时刻，**必须是 `DND.WHITELIST` 成员**（手机上有对应刺客） |
+| `"@具名"` | 时刻由块级 `at` 表达式算出（动态），靠门铃投递 |
+
+### 3.4 一条规格的全部键
 
 | 键 | 可选值 | 缺省 |
 |---|---|---|
 | `when` | `{ morning/noon/eve/night: [...] }` | 无条件 = 总是 |
-| `value` | 字面量；`null` = 释放主张 | 省略 = 继承订阅（现已不用） |
+| `value` | 字面量；`null` = 撤销主张 | 必填 |
 | `preset` | focus 换挡（`do_not_disturb` 等） | 字段的 `PRESET` |
 | `shape` | `"level"` / `"pulse"` | 字段的 `SHAPE` |
 | `until` | `"HH:MM"` 或 `{ offset: N }`（仅 level） | 无 |
 | `apply` | `always` / `if_changed` / `if_differs` | 字段的 `APPLY` |
 | `guard` | `"none"` / `"sleep"` / 数组 | 无守卫 |
 | `at` | 时刻表达式（键为 `"@具名"` 时用） | 键本身就是时刻 |
-
-**一格多条变体**写成数组，每条都必须有 `when` 且互斥：
-
-```js
-"22:25": [
-  { when: { night:["home"], eve:["rest"] }, value:"on", shape:"pulse" },
-  { when: { night:["away"] },               value:"on", shape:"pulse" },
-]
-```
+| `note` | 给人看的一句话 | — |
 
 ---
 
-## 4. 三个字段共用一份骨架
+## 4. 想看规则的三种方式
 
-`focus` / `silent` / `media_volume` 的**时刻和日型条件完全一样**，只有值和判据不同。
-所以抽成了 `quietShape()`（`config.default.js` 顶部）：
+| 方式 | 给谁 | 特点 |
+|---|---|---|
+| `config.default.js` 的 `V2.BOUNDARIES` | 改规则的人 | 唯一真相，改这里 |
+| **`/v2/schema?format=text`** | 「我就想知道会发生什么」 | ⭐ 渲染成表，**还附今天实际算出的边界** |
+| `/v2/schema` | 机器 / 将来的 GUI | 规范形式 + 两种视图 + 自动化清单 |
 
-```js
-focus: {
-  RULES: {
-    ...quietShape({
-      onValue: "on", offValue: "off",
-      onExtra:  { guard: "none"  },   // 进入侧：手动开着专注就让路
-      offExtra: { guard: "sleep" },   // 解除侧：只解除睡眠
-    }),
-    // 午休是 focus 独有的
-    "12:15": { when:{noon:["work"]}, value:"on", shape:"pulse",
-               apply:"always", preset:"do_not_disturb" },
-  },
-}
+`format=text` 长这样：
+
 ```
-
-**改晨/夜时刻改一处全跟。** 有条用例锁着「三个字段解除时刻必须一致」。
+▌ 20:55   night=home  eve=workday
+  在家 + 明天上班 → 今晚提前进
+  字段          做什么                形状    判据        守卫
+  focus         sleep = on            pulse   if_changed  none
+  silent        on                    pulse   if_changed  —
+  media_volume  0                     pulse   if_changed  —
+```
 
 ---
 

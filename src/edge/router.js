@@ -16,7 +16,7 @@ import { buildTimeline } from "../kernel/registry.js";
 import { buildFieldTimelines } from "../kernel/fields.js";
 import { assembleState } from "./assemble.js";
 import { toCanonical, applyCanonical, toTimeMajor, toFieldMajor, auditRuleRefs,
-         deriveAutomations } from "../kernel/rules.js";
+         deriveAutomations, renderRuleTable } from "../kernel/rules.js";
 import { sweepDoorbells, barkDriver, pickDoorbells, pushPlan } from "./push.js";
 import { buildResolve } from "./resolve.js";
 import * as sources from "./sources.js";
@@ -441,6 +441,12 @@ export async function handleV2(request, env, path, loaders = sources) {
     }
     const resolve = buildResolve(platform, locales, trace);   // 先算，供 guards 展开 match[]
     if (path === "/schema") {
+      // ?format=text → 人读的规则表（「07:44 到底发生了什么」的直接答案）
+      if (url.searchParams.get("format") === "text") {
+        const tl = buildFieldTimelines(fieldsCfg, schedules, range);
+        return new Response(renderRuleTable(canonical, tl),
+          { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      }
       // 规范形式 + 两种视图的反向渲染（可逆检查）。给人看、给将来的 Pages 前端看。
       return json({
         canonical,

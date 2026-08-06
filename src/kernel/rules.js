@@ -30,8 +30,12 @@
 //   guards? 完整守卫数组（与 guard 二选一）
 // ─────────────────────────────────────────────────────────────────────────────
 
+// "7:5" → "07:05"。⚠️ 具名键（"@morning_release"）原样返回 —— 它不是时刻，
+// 时刻由 at 表达式在编译期算出（否则会被补成 "@morning_release:00"）。
 const padHM = (hm) => {
-  const [h, m] = String(hm).split(":");
+  const k = String(hm);
+  if (k.startsWith("@")) return k;
+  const [h, m] = k.split(":");
   return `${String(h).padStart(2, "0")}:${String(m ?? "00").padStart(2, "0")}`;
 };
 const SPEC_KEYS = new Set(["at", "when", "value", "preset", "shape", "until", "apply", "guard", "guards", "note"]);
@@ -129,9 +133,13 @@ export function toCanonical({ fields = {}, boundaries = {} } = {}) {
   const put = (hm, field, spec, source) => {
     const key = padHM(hm);
     const dedup = `${key}|${field}`;
-    if (seen.has(dedup)) {
+    // 冲突 = 【两种书写形式】各写了一份（字段为主键 vs 时刻为主键）。
+    // 同一来源的多条变体不是冲突 —— 那是「同一格按日型分叉」，是正常写法。
+    // ⚠️ 判据必须是 source 不同，不能只看 dedup 是否出现过（2026-08-04 修）。
+    const prev = seen.get(dedup);
+    if (prev && prev !== source) {
       throw new Error(
-        `规则冲突: (${key}, ${field}) 在 ${seen.get(dedup)} 和 ${source} 各写了一份。` +
+        `规则冲突: (${key}, ${field}) 在 ${prev} 和 ${source} 各写了一份。` +
         `两种书写形式只是视图，同一格不能有两份真相 —— 删掉其中一处`,
       );
     }
@@ -156,10 +164,34 @@ export function toCanonical({ fields = {}, boundaries = {} } = {}) {
       put(hm, field, spec, `FIELDS.${field}.RULES`);
     }
   }
-  // 时刻为主键
-  for (const [hm, byField] of Object.entries(boundaries || {})) {
-    for (const [field, spec] of Object.entries(byField || {})) {
-      put(hm, field, spec, "V2.BOUNDARIES");
+  // ── 时刻为主键（推荐写法）─────────────────────────────────────────────────
+  //   一个时刻一个块，块级键（when/shape/apply/at/until）由该时刻的所有字段共享，
+  //   字段只写自己不同的那部分。这样「07:44 到底发生了什么」是【一眼可读】的 ——
+  //   这正是规则原子化最初要解决的问题。
+  //
+  //   { "20:55": { when:{...}, shape:"pulse",        ← 共享
+  //                fields: { focus:{value:"on", guard:"none"}, silent:{value:"on"} } } }
+  const SHARED = ["when", "shape", "apply", "at", "until", "note"];
+  for (const [hm, block] of Object.entries(boundaries || {})) {
+    const variants = Array.isArray(block) ? block : [block];
+    for (const v of variants) {
+      if (!v || typeof v !== "object") throw new Error(`规则 V2.BOUNDARIES ${hm}: 必须是对象`);
+      // 有 fields 键 = 新形态（块级共享）；没有 = 老形态（直接 字段→规格）
+      const byField = v.fields || v;
+      const shared = v.fields
+        ? Object.fromEntries(SHARED.filter((k) => k in v).map((k) => [k, v[k]]))
+        : {};
+      if (v.fields) {
+        const unknown = Object.keys(v).filter((k) => k !== "fields" && !SHARED.includes(k));
+        if (unknown.length) {
+          throw new Error(`规则 V2.BOUNDARIES ${hm}: 块级未知键 ${unknown.join("/")}（` +
+            `可共享的只有 ${SHARED.join("/")}；字段专属的写进 fields.<字段>）`);
+        }
+      }
+      for (const [field, spec] of Object.entries(byField)) {
+        // 字段级同名键覆盖块级（局部优先），这是唯一的合并规则
+        put(hm, field, { ...shared, ...spec }, "V2.BOUNDARIES");
+      }
     }
   }
 
@@ -288,4 +320,59 @@ export function deriveAutomations(timelines, whitelist, push = {}) {
     summary: `${timeOfDay.length} 条时间自动化 + ${push.ENABLED === false ? 0 : 1} 条通知自动化；` +
              `其中 ${viaDoorbell.length} 个时刻靠门铃送达（多为算出来的动态时刻）`,
   };
+}
+
+/**
+ * 渲染成人读的规则表（`/v2/schema?format=text`）。
+ * 存在的理由: 配置是给机器和改规则的人看的；这个是给「我就想知道 07:44 会发生什么」
+ * 的人看的 —— 不用读代码、不用心算，一张表看完。
+ */
+export function renderRuleTable(canonical, timelines) {
+  const W = (s, n) => String(s ?? "—").padEnd(n - [...String(s ?? "—")].filter(c => c.charCodeAt(0) > 255).length);
+  const out = ["规则表（触发因 × 字段）", "=".repeat(78), ""];
+  for (const trigger of Object.keys(canonical).sort()) {
+    const list = canonical[trigger];
+    const hm = trigger.replace("clock@", "");
+    // 同一触发因下按 when 分组 —— 一组就是「某种日子的做法」
+    const groups = new Map();
+    for (const r of list) {
+      const k = JSON.stringify(r.when || null);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    for (const [whenKey, rows] of groups) {
+      const when = JSON.parse(whenKey);
+      const cond = when
+        ? Object.entries(when).map(([a, v]) => `${a}=${v.join("|")}`).join("  ")
+        : "（无条件）";
+      const g0 = rows[0];
+      out.push(`▌ ${hm}   ${cond}`);
+      if (g0.note) out.push(`  ${g0.note}`);
+      if (g0.at && typeof g0.at === "object") {
+        out.push(`  时刻算法: ${g0.at.from}.${g0.at.pick} + ${g0.at.offset || 0}分` +
+                 `，不早于 ${g0.at.not_before || "—"}，算不出用 ${g0.at.fallback || "—"}`);
+      }
+      out.push("  " + W("字段", 14) + W("做什么", 22) + W("形状", 8) + W("判据", 12) + "守卫");
+      for (const r of rows) {
+        const act = r.value === null ? "撤销主张(null)"
+          : r.preset ? `${r.preset} = ${r.value}` : String(r.value);
+        out.push("  " + W(r.field, 14) + W(act, 22) + W(r.shape, 8) +
+                 W(r.apply, 12) + (Array.isArray(r.guard) ? r.guard.join("|") : r.guard ?? "—"));
+      }
+      out.push("");
+    }
+  }
+  if (timelines) {
+    out.push("=".repeat(78), "今天实际算出来的边界", "");
+    for (const [field, segs] of Object.entries(timelines)) {
+      const today = (segs || []).filter((x) => x.value !== undefined);
+      if (!today.length) continue;
+      out.push(`  ${W(field, 16)}` + today.map((x) => {
+        const v = x.value === null ? "∅"
+          : (x.value && x.value.action) ? `${x.value.preset}:${x.value.action}` : x.value;
+        return `${x.from.slice(11)}=${v}`;
+      }).join("  "));
+    }
+  }
+  return out.join("\n");
 }
